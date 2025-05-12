@@ -1,7 +1,8 @@
 ## Written by https://github.com/anthonysecco
-# Special thanks to Mike Goubeaux (SmartyVan)
+# Special thanks to Mike Goubeaux (Smarty Van)
 # To be used with Undermount AC ESP Home Thermostat and Undermount AC System
 
+# Connector Matrix:
 # Output 1 - Blower Speed (White Wire)
 # Output 2 - Blower Power On/Off (Brown Wire) 
 # Output 3 - Low-Speed Compressor (Blue Wire)
@@ -15,19 +16,22 @@ substitutions:
   device_name: undermount-ac
   friendly_name: "Undermount AC"
 
-  # Be careful making changes to these values. 
-  # Defaults are as follows
-  # kp of '0.2' adds 20% blower speed for every 1C
-  # ki of '0.000334' doubles the 'kp' speed over 10 minutes if error (actual temp - set temp) is 5C.
-  # kd is '0.0' and not used.
-  # For more details watch https://www.youtube.com/watch?v=dZ8lzDi3cXY
-  
-  kp: '0.2' # Proportional - Sets how much blower speed % to add for every degree.  1.0 is 100%.
-  ki: '0.000334' # Integral - Sets how quickly to add to blower speed % if not reaching the target.
-  kd: '0.0' # Derivative - Sets how quickly to dampen blower speed as it reaches target temp.
+  # Be careful making changes to kp, ki, kid and intergal clamp factor. 
+  # Please refer to the readme file.
+  # General PID control education: https://www.youtube.com/watch?v=dZ8lzDi3cXY
 
-  # This limits integral contribution.  Integral contribution is multiplied by this number.
-  integral_clamp_factor: '2.0' #Increase '0.25' increments every few days if your van has difficulty reaching the set temperature.
+  ### PID Tune Control ###
+  kp: '0.2' # Proportional
+  ki: '0.000334' # Integral
+  kd: '0.0' # Derivative
+  integral_clamp_factor: '2.0' # Limits integral windup
+  ########################
+
+  # Defaults:  
+    # kp '0.2'
+    # ki '0.000334'
+    # kd '0.0'
+    # integral_clamp_factor '2.0'
 
 # Globals
 ################################################################################
@@ -61,6 +65,10 @@ esphome:
           id(integral) = 0.0;
           id(previous_error) = 0.0;
 
+  project:
+    name: anthonysecco.undermount-ac-esphome-thermostat
+    version: "0.1.0-beta"
+
 esp32:
   board: esp32-s3-devkitc-1
   framework:
@@ -71,11 +79,11 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  manual_ip:
-    static_ip: 10.0.1.27
-    gateway: 10.0.1.1
-    subnet: 255.255.255.0
-    dns1: 10.0.1.1
+#  manual_ip:
+#    static_ip: 192.168.1.50
+#    gateway: 192.168.1.1
+#    subnet: 255.255.255.0
+#    dns1: 192.168.1.1
   output_power: 14db # 8.5db (lowest) and 20.5db (highest)
   ap: # Backup Access Point if Wi-Fi is unavailable
     ssid: "${friendly_name} Fallback AP"
@@ -91,6 +99,10 @@ api:
 
 ota:
   - platform: esphome
+
+dashboard_import:
+  package_import_url: github://anthonysecco/undermount-ac-esphome-thermostat/blob/main/undermount-ac.yaml@main
+  import_full_config: true
 
 # LEDs
 ################################################################################
