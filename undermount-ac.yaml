@@ -325,7 +325,6 @@ switch:
     internal: true
 
   - platform: gpio # Output 4
-    name: "High-Speed Enable"
     id: compressor_speed_high
     pin:
       number: 10
@@ -335,7 +334,7 @@ switch:
       - script.execute: status_light_update
     on_turn_off:
       - script.execute: status_light_update
-    disabled_by_default: true # User must manually enable compressor high speed in Home Assistant
+    internal: true
 
   - platform: gpio # Output 5 - Unused
     pin: 20
@@ -348,6 +347,12 @@ switch:
     id: output_6
     name: Output 6
     disabled_by_default: true
+
+  - platform: template # User can enable/disable the compressor
+    name: "Enable High-speed Compressor"
+    id: enable_high_speed
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
 
 # Climate
 ################################################################################
@@ -387,25 +392,23 @@ climate:
     idle_action:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
-      - delay: 15s
       - lambda: |-
           id(blower_pwm).set_min_power(0.10);
           id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
-      - delay: 15s
+      - delay: 30s
       - fan.turn_off: blower_fan
 
     off_mode:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
-      - delay: 15s
       - lambda: |-
           id(blower_pwm).set_min_power(0.10);
           id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
-      - delay: 15s
+      - delay: 30s
       - fan.turn_off: blower_fan
 
     on_boot_restore_from: memory
@@ -595,7 +598,7 @@ script:
 
               // High-speed Compressor Start
               if (id(blower_speed_called).state >= high_speed_start_threshold && 
-                  id(compressor_speed_high).state) {
+                  id(enable_high_speed).state) {
                   
                   if (!id(high_speed_active)) {
                       uint32_t elapsed_time = now - id(high_speed_start);
