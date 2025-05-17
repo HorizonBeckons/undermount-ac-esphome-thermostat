@@ -109,7 +109,7 @@ captive_portal:
 # Core Services
 ################################################################################
 logger:
-  level: INFO
+  level: DEBUG # Change to DEBUG for more logs
 api:
 
 ota:
@@ -325,6 +325,7 @@ switch:
     internal: true
 
   - platform: gpio # Output 4
+    name: "High-Speed Enable"
     id: compressor_speed_high
     pin:
       number: 10
@@ -386,23 +387,25 @@ climate:
     idle_action:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
+      - delay: 15s
       - lambda: |-
           id(blower_pwm).set_min_power(0.10);
           id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
-      - delay: 60s
+      - delay: 15s
       - fan.turn_off: blower_fan
 
     off_mode:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
+      - delay: 15s
       - lambda: |-
           id(blower_pwm).set_min_power(0.10);
           id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
-      - delay: 60s
+      - delay: 15s
       - fan.turn_off: blower_fan
 
     on_boot_restore_from: memory
