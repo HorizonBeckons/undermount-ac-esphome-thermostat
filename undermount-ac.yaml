@@ -24,22 +24,25 @@ substitutions:
   kp: '0.2' # Proportional
   ki: '0.000334' # Integral
   kd: '0.0' # Derivative
-  integral_clamp_factor: '2.0' # Limits integral windup
+  integral_clamp_factor: '1.5' # Dynamic Integral clamp to prevent windup
   ########################
 
   # Defaults:  
-    # kp '0.2'
-    # ki '0.000334'
-    # kd '0.0'
-    # integral_clamp_factor '2.0'
+    # kp '0.2' - Add 20% blower speed per degree C
+    # ki '0.000334' - Ramp blower to 100% over 10 minutes if set point not reached
+    # kd '0.0' - Not used.
+    # integral_clamp_factor '1.5' - Limit integral wind up.  Intregal can only wind up to 100% if error is greater than 1C.
 
 # Globals
 ################################################################################
 globals:
+  # PID Control Globals
   - id: integral
     type: float
   - id: previous_error
     type: float
+
+  # High-speed Compressor Globals
   - id: last_time
     type: uint32_t
     initial_value: '0'
@@ -53,6 +56,20 @@ globals:
     type: bool
     initial_value: 'false'
 
+  # Blower Ramp Globals
+  - id: current_blower_speed
+    type: float
+    restore_value: yes
+    initial_value: '1.0'
+  - id: target_blower_speed
+    type: float
+    restore_value: yes
+    initial_value: '1.0'
+  - id: ramp_blower
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
 # Board Configuration
 ################################################################################
 esphome:
@@ -62,9 +79,9 @@ esphome:
     priority: -10
     then:
       - lambda: |-
+          // reset integral
           id(integral) = 0.0;
           id(previous_error) = 0.0;
-
   project:
     name: anthonysecco.undermount-ac-esphome-thermostat
     version: "0.1.0-beta"
@@ -79,11 +96,11 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-#  manual_ip:
-#    static_ip: 192.168.1.50
-#    gateway: 192.168.1.1
-#    subnet: 255.255.255.0
-#    dns1: 192.168.1.1
+  manual_ip:
+    static_ip: 10.0.1.27
+    gateway: 10.0.1.1
+    subnet: 255.255.255.0
+    dns1: 10.0.1.1
   output_power: 14db # 8.5db (lowest) and 20.5db (highest)
   ap: # Backup Access Point if Wi-Fi is unavailable
     ssid: "${friendly_name} Fallback AP"
@@ -94,7 +111,7 @@ captive_portal:
 # Core Services
 ################################################################################
 logger:
-
+  level: INFO
 api:
 
 ota:
@@ -159,31 +176,44 @@ sensor:
   - platform: sht3xd #SHT30 Temp/Humidity Sensor
     i2c_id: bus_a
     id: onboard_sht30
-    temperature:
-      name: "UndermountAC Temperature"
-      id: onboard_temperature
     humidity:
       name: "UndermountAC Humidity"
       id: onboard_humidity
-    update_interval: 30s
+      accuracy_decimals: 0
+      
+    temperature:
+      name: "UndermountAC Temperature"
+      id: onboard_temperature
+      filters:
+        - median:               # Median Filter - Reduces short spikes and outliers
+            window_size: 3      # Median of last 3 readings (45 seconds)
+            send_every: 1       # Send every 2 filtered values for better responsiveness
+            send_first_at: 1    # Send the first filtered value immediately
+        - delta: 0.1           # Ignore changes smaller than x degrees
+        - sliding_window_moving_average:  # Moving Average - Smooth out temperature changes
+            window_size: 5      # Average of the last 5 readings (75 seconds)
+            send_every: 1       # Send every 3 readings to reduce noise
+        - lambda: return round(x * 10.0) / 10.0;  # Round to 1 decimal place
+      accuracy_decimals: 1
+      unit_of_measurement: "°C"
+    update_interval: 15s
 
-  - platform: template # Fan Speed Diagnostic Sensor
-    id: fan_speed_called
-    name: Blower Speed Called
+  - platform: template
+    id: blower_speed_called
+    name: "Output 1 (Blower Speed)"
     accuracy_decimals: 0
     unit_of_measurement: "%"
     device_class: ""
     entity_category: "diagnostic"
     icon: mdi:fan
     filters:
-      # Simulate clamped fan speed values 
-      - lambda: |- 
+      # simulate clamped fan speed values 
+      - lambda: |-
           if(id(blower_fan).state) {
-            return ((x * .01) * (id(blower_speed).get_max_power() - id(blower_speed).get_min_power()) + id(blower_speed).get_min_power()) * 100;
+            return ((x * .01) * (id(blower_pwm).get_max_power() - id(blower_pwm).get_min_power()) + id(blower_pwm).get_min_power()) * 100;
           } else {
             return 0.0;
           }
-    disabled_by_default: true
 
   # Uncomment sensors below for Wi-Fi Diagnostics
   #- platform: wifi_signal
@@ -206,7 +236,7 @@ sensor:
 
 binary_sensor:
   - platform: template
-    name: "Blower Power Called"
+    name: "Output 2 (Blower Power)"
     id: blower_power_called
     device_class: "power"
     entity_category: "diagnostic"
@@ -216,7 +246,7 @@ binary_sensor:
     disabled_by_default: true
 
   - platform: template
-    name: "Low-Speed Compressor Called"
+    name: "Output 3 (Low-Speed Compressor)"
     id: low_speed_compressor_called
     device_class: "power"
     entity_category: "diagnostic"
@@ -226,13 +256,22 @@ binary_sensor:
     disabled_by_default: true
 
   - platform: template
-    name: "High-Speed Compressor Called"
+    name: "High-Speed Active" # Output 4
     id: high_speed_compressor_called
     device_class: "power"
     entity_category: "diagnostic"
-    icon: "mdi:toggle-switch"
+    icon: "mdi:speedometer"
     lambda: |-
       return id(compressor_speed_high).state;
+
+  - platform: template
+    name: "Ramp Blower"
+    id: ramp_blower_diag
+    device_class: "moving"
+    entity_category: "diagnostic"
+    icon: "mdi:fan"
+    lambda: |-
+      return id(ramp_blower);
     disabled_by_default: true
 
 #Outputs
@@ -255,10 +294,10 @@ output:
 
   - platform: ledc # Output 1
     pin: 7
-    id: blower_speed
+    id: blower_pwm
     power_supply: blower_power
-    frequency: 21500 Hz
-    min_power: 0.50
+    frequency: 240 hz # Frequency per Undermount AC
+    min_power: 0.10
     max_power: 0.98
     zero_means_zero: true
 
@@ -271,14 +310,14 @@ power_supply:
 fan:
   - platform: speed
     name: "Blower"
-    output: blower_speed
+    output: blower_pwm
     id: blower_fan
-    on_turn_off:
-      - lambda: id(fan_speed_called).publish_state(id(blower_fan).speed);
-    on_speed_set:
-      - lambda: id(fan_speed_called).publish_state(id(blower_fan).speed);
     disabled_by_default: true
-
+    on_turn_off:
+      - lambda: id(blower_speed_called).publish_state(id(blower_fan).speed);
+    on_speed_set:
+      - lambda: id(blower_speed_called).publish_state(id(blower_fan).speed);
+      
 switch:  
   - platform: gpio # Output 3
     id: compressor_speed_low
@@ -304,7 +343,7 @@ switch:
   - platform: gpio # Output 5 - Unused
     pin: 20
     id: output_5
-    name: Output 5
+    name: Output 
     disabled_by_default: true
 
   - platform: gpio # Output 6 - Unused
@@ -314,9 +353,8 @@ switch:
     disabled_by_default: true
 
   - platform: template # User can enable/disable the compressor
-    id: high_speed_enabled
-    name: Enabled High-speed Cooling
-    icon: mdi:speedometer
+    id: enable_high_speed
+    name: Enable High-speed Compressor
     restore_mode: RESTORE_DEFAULT_OFF
     optimistic: true
 
@@ -332,39 +370,51 @@ climate:
       min_temperature: 65 °F
       max_temperature: 95 °F
 
-    min_cooling_off_time: 2min  # 2min or greater per UndermountAC
-    min_cooling_run_time: 2min  # 2min or greater per UndermountAC
-    min_idle_time: 30s          # Sets minimum time thermostat remains in idle state.
-    min_fanning_off_time: 30s   # Sets minimum time blower must remain off before it can be turned on again.
-    min_fanning_run_time: 30s   # Sets minimum time blower must stay on once it has been activated.
-    cool_deadband: 0.5 °C       # Reactivate cooling if this degree over set point
-    cool_overrun: 1.0 °C        # Maintain cooling up to this degree below set point
+    min_cooling_off_time: 2min  # SYSTEM PROECTION: >=2min per UndermountAC to prevent short cycle damage
+    min_cooling_run_time: 2min  # SYSTEM PROECTION: >=2min per UndermountAC to prevent short cycle damage
+    min_idle_time: 2min         # Sets minimum time thermostat remains in idle state.
+    min_fanning_off_time: 2min   # Sets minimum time blower must remain off before it can be turned on again.
+    min_fanning_run_time: 2min   # Sets minimum time blower must stay on once it has been activated.
+    cool_deadband: 0.5 °C       # Maintain IDLE until this degree over set point
+    cool_overrun: 1.0 °C        # Maintain COOL until this degree below set point
 
-    cool_action:
-      - lambda: id(blower_speed).set_min_power(0.50); # Minimum 40% to prevent evaporator frost per UndermountAC
-      - lambda: id(blower_speed).set_min_power(0.98);
-      - switch.turn_on: compressor_speed_low
-      - delay: 30s
-      - fan.turn_on: blower_fan
-    idle_action:
-      - switch.turn_off: compressor_speed_low
-      - switch.turn_off: compressor_speed_high
-      - lambda: id(blower_speed).set_max_power(0.30); # Ramp down blower.
-      - lambda: id(blower_speed).set_min_power(0.98);
-      - delay: 30s # Delay blower turnoff to push out remaining cold air
-      - fan.turn_off: blower_fan
     fan_only_action:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
-      - lambda: id(blower_speed).set_min_power(0.30);
-      - lambda: id(blower_speed).set_min_power(0.98);
+      - lambda: |-
+          id(blower_pwm).set_min_power(0.10);
+          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
       - fan.turn_on: blower_fan
+
+    cool_action:
+      - switch.turn_on: compressor_speed_low
+      - lambda: |-
+          id(blower_pwm).set_min_power(0.40); // SYSTEM PROECTION: >=40%  per UndermountAC to prevent frozen evaporator
+          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: <=98%  per UndermountAC
+      - fan.turn_on: blower_fan
+      
+    idle_action:
+      - switch.turn_off: compressor_speed_low
+      - switch.turn_off: compressor_speed_high
+      - lambda: |-
+          id(blower_pwm).set_min_power(0.10);
+          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
+          id(target_blower_speed) = 1;
+          id(ramp_blower) = true;
+      - delay: 30s
+      - fan.turn_off: blower_fan
+
     off_mode:
       - switch.turn_off: compressor_speed_low
       - switch.turn_off: compressor_speed_high
-      - delay: 30s # Delay blower turnoff to push out remaining cold air
+      - lambda: |-
+          id(blower_pwm).set_min_power(0.10);
+          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
+          id(target_blower_speed) = 1;
+          id(ramp_blower) = true;
+      - delay: 30s
       - fan.turn_off: blower_fan
-    
+
     on_boot_restore_from: memory
     default_preset: Standby # If no memory, default to Standby.
     preset:
@@ -385,147 +435,96 @@ climate:
     fan_only_cooling: true
 
     fan_mode_low_action:
-      - logger.log: "Blower is LOW"
+      - lambda: |-
+          id(target_blower_speed) = 1;
+          id(ramp_blower) = true;
+          ESP_LOGI("Climate", "Fan Mode LOW");
+
     fan_mode_medium_action:
-      - logger.log: "Blower is MEDIUM"
+      - lambda: |-
+          id(target_blower_speed) = 50;
+          id(ramp_blower) = true;
+          ESP_LOGI("Climate", "Fan Mode MEDIUM");
+
     fan_mode_high_action:
-      - logger.log: "Blower is HIGH"
+      - lambda: |-
+          id(target_blower_speed) = 100;
+          id(ramp_blower) = true;
+          ESP_LOGI("Climate", "Fan Mode HIGH");
+
     fan_mode_auto_action:
-      - logger.log: "Blower is AUTO"
+      - lambda: |-
+          // Reset PID integral
+          id(integral) = 0.0;
+          id(previous_error) = 0.0;
+          ESP_LOGI("Climate", "Fan Mode AUTO");
+      - script.execute: climate_fan_auto_pid
 
     on_state:
-      - script.execute: update_blower_speed
+      - script.execute: climate_fan_auto_pid
       - script.execute: status_light_update
-      - lambda: |-
-          // Reset PID components when transitioning from OFF
-          if (id(undermount_thermostat).mode == CLIMATE_MODE_OFF) {
-              id(integral) = 0.0;
-              id(previous_error) = 0.0;
-          }   
 
 # Scripts
 ################################################################################
 script:
-  - id: update_blower_speed
+  # Calculates PID output
+  - id: climate_fan_auto_pid
     then:
       - lambda: |-
-          // Skip entire logic if climate mode is OFF
-          if (id(undermount_thermostat).mode != CLIMATE_MODE_OFF) {
+          if ((id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) && (id(undermount_thermostat).mode != CLIMATE_MODE_OFF)) {
+            // Time Management
+            uint32_t now = millis();
+            float dt = (id(last_time) == 0) ? 1.0 : (now - id(last_time)) / 1000.0;
+            id(last_time) = now;
 
-              // High-speed Compressor Settings
-              const float high_speed_threshold = 75.0;          // Engage high-speed compressor at this underlying blowering speed
-              const uint32_t min_high_speed_time = 120000;      // 2 min on-time
-              const uint32_t min_high_speed_off_time = 120000;  // 2 min off-time
+            // Get min and max blower pwm power thresholds
+            float min_output = id(blower_pwm).get_min_power();
+            float max_output = id(blower_pwm).get_max_power();
 
-              // Time Management
-              uint32_t now = millis();
-              float dt = (id(last_time) == 0) ? 1.0 : (now - id(last_time)) / 1000.0;
-              id(last_time) = now;
+            // Initalize fan_speed
+            int fan_speed;
 
-              int fan_speed = 0;  // Default fan speed
+            // PID Constants
+            const float Kp = ${kp};
+            const float Ki = ${ki};
+            const float Kd = ${kd};
 
-              // Manual Fan Modes
-              if (id(undermount_thermostat).fan_mode == CLIMATE_FAN_LOW) {
-                  fan_speed = 0;
-                  id(blower_speed).set_min_power(0.50);
-                  id(blower_speed).set_max_power(0.98);
-                  ESP_LOGD("Fan Mode", "Manual: LOW - Fan Speed: %d", fan_speed);
-              } else if (id(undermount_thermostat).fan_mode == CLIMATE_FAN_MEDIUM) {
-                  fan_speed = 50;
-                  id(blower_speed).set_min_power(0.50);
-                  id(blower_speed).set_max_power(0.98);
-                  ESP_LOGD("Fan Mode", "Manual: MEDIUM - Fan Speed: %d", fan_speed);
-              } else if (id(undermount_thermostat).fan_mode == CLIMATE_FAN_HIGH) {
-                  fan_speed = 100;
-                  id(blower_speed).set_min_power(0.50);
-                  id(blower_speed).set_max_power(0.98);
-                  ESP_LOGD("Fan Mode", "Manual: HIGH - Fan Speed: %d", fan_speed);
-              } 
-              
-              // Auto Fan Mode
-              else if (id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) {
-                  // PID Constants
-                  const float Kp = ${kp};
-                  const float Ki = ${ki};
-                  const float Kd = ${kd};
+            // Temperature Error Calculation
+            float current_temp = id(undermount_thermostat).current_temperature;
+            float target_temp = id(undermount_thermostat).target_temperature;
+            float error = current_temp - target_temp;
 
-                  // Temperature Error Calculation
-                  float current_temp = id(undermount_thermostat).current_temperature;
-                  float target_temp = id(undermount_thermostat).target_temperature;
-                  float error = current_temp - target_temp;
+            // Proportional
+            float P = Kp * error;
 
-                  // Calculate Proportional
-                  float P = Kp * error;
-                  id(integral) += error * dt;
+            // Integral
+            id(integral) += error * dt;
+            float integral_limit = fabs(${integral_clamp_factor} * P / Ki); // Clamp based on Proportional
+            id(integral) = fmax(-integral_limit, fmin(id(integral), integral_limit));
+            float I = Ki * id(integral);
 
-                  // Calculate Integral
-                  float integral_limit = fabs(${integral_clamp_factor} * P / Ki); // Clamp based on Proportional
-                  id(integral) = fmax(-integral_limit, fmin(id(integral), integral_limit));
-                  float I = Ki * id(integral);
-                  
-                  // Calculate Derivative
-                  float derivative = (error - id(previous_error)) / dt;
-                  float D = Kd * derivative;
-                  id(previous_error) = error;
+            // Derivative
+            float derivative = (error - id(previous_error)) / dt;
+            float D = Kd * derivative;
+            id(previous_error) = error;
 
-                  // Output Calculation
-                  float output = fmax(0.0, fmin(1.0, P + I + D));
-                  fan_speed = static_cast<int>(output * 100);
-                  id(blower_speed).set_min_power(0.50);
-                  id(blower_speed).set_max_power(0.98);
-                  ESP_LOGI("PID", "AUTO Mode - Error: %.2f, P: %.2f, I: %.2f, D: %.2f, Output: %.2f, Fan Speed: %d", error, P, I, D, output, fan_speed);
-              }
+            // PID output clamped between 0 and 1
+            float output = fmax(0.0, fmin(1.0, P + I + D));
 
-              // Fan Speed Command (Applies to both AUTO and Manual modes)
-              auto call = id(blower_fan).make_call();
-              call.set_speed(fan_speed);
-              call.perform();
+            // Map output to fan speed (0 to 100)
 
-              // Debug log lines to ensure correct conditions
-              ESP_LOGI("High-Speed Check", "Blower Fan Speed: %.2f%% (Threshold: %.2f%%)", id(fan_speed_called).state, high_speed_threshold);
-              ESP_LOGI("High-Speed Check", "Climate Action: %s", 
-                  (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING) ? "COOLING" : "NOT COOLING");
-              ESP_LOGI("High-Speed Check", "High-Speed Enabled: %s", id(high_speed_enabled).state ? "YES" : "NO");
+            fan_speed = static_cast<int>(output * 100);
+            fan_speed = fmax(1, fmin(100, fan_speed));
 
-              // High-Speed Compressor Control (Applies to both AUTO and Manual modes)
-              if (id(fan_speed_called).state >= high_speed_threshold && 
-                  id(undermount_thermostat).action == CLIMATE_ACTION_COOLING && 
-                  id(high_speed_enabled).state) {
-                  
-                  // Check if compressor can be turned on
-                  if (!id(high_speed_active) && (now - id(high_speed_stop) >= min_high_speed_off_time)) {
-                      id(high_speed_active) = true;
-                      id(high_speed_start) = now;
-                      id(compressor_speed_high).turn_on();
-                      ESP_LOGI("Compressor", "Switched to HIGH speed");
-                  } 
-                  // Maintain high-speed operation
-                  else if (id(high_speed_active)) {
-                      uint32_t elapsed_time = now - id(high_speed_start);
-                      int duration = elapsed_time / 1000;  // Convert ms to seconds
+            // Logging
+            ESP_LOGI("PID Control", "Error: %.2f, P: %.2f, I: %.2f, D: %.2f, Output: %.2f, Fan Speed: %d", error, P, I, D, output, fan_speed);
 
-                      // Ensure minimum ON time is maintained
-                      if (elapsed_time < min_high_speed_time) {
-                          int remaining_time = (min_high_speed_time - elapsed_time) / 1000;
-                          ESP_LOGI("Compressor", "High-speed maintained for minimum duration - %d seconds remaining", remaining_time);
-                      } else {
-                          ESP_LOGI("Compressor", "High-speed running - %d seconds elapsed", duration);
-                      }
-                  }
-              } 
-              // Condition to turn off the high-speed compressor
-              else if (id(high_speed_active) && 
-                      ((id(blower_fan).state < high_speed_threshold) || !id(high_speed_enabled).state)) {
-                  // Immediate turn-off if high-speed cooling is disabled or blower speed is below threshold
-                  id(high_speed_active) = false;
-                  id(high_speed_stop) = now;
-                  id(compressor_speed_high).turn_off();
-                  ESP_LOGI("Compressor", "Switched to LOW speed");
-              }
+            // Set blower speed using blower ramp
+            id(target_blower_speed) = fan_speed;
+            id(ramp_blower) = true;
           }
 
-      - lambda: id(fan_speed_called).publish_state(id(blower_fan).speed);
-
+  # Sets LED on thermostat
   - id: status_light_update
     then:
       - if: # CLIMATE OFF - ORANGE
@@ -583,4 +582,96 @@ script:
                 green: 100%
                 blue: 100%
                 brightness: 40%
-                effect: "Pulse"  
+                effect: "Pulse"
+
+interval:
+  # Start/Stop Compressor based on blower speed threshold
+  - interval: 15s
+    id: update_compressor_control
+    then:
+      - lambda: |-
+          // Check if climate component is cooling
+          if (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING) {
+              const float high_speed_start_threshold = 75.0;  // Blower speed % to start high speed
+              const float high_speed_stop_threshold = 65.0;   // Blower speed % to stop high speed
+              const uint32_t time_threshold = 120000;          // SYSTEM PROTECTION - Delay speed change timer (2 minutes)
+              uint32_t now = millis();
+
+              // High-speed Compressor Start
+              if (id(blower_speed_called).state >= high_speed_start_threshold && 
+                  id(enable_high_speed).state) {
+                  
+                  if (!id(high_speed_active)) {
+                      uint32_t elapsed_time = now - id(high_speed_start);
+                      if (elapsed_time >= time_threshold) {
+                          id(high_speed_active) = true;
+                          id(compressor_speed_high).turn_on();
+                          ESP_LOGI("Compressor", "High-speed turned ON");
+                      } else {
+                          ESP_LOGD("Compressor", "High-speed ON requested, waiting for timer: %.2f s remaining", (time_threshold - elapsed_time) / 1000.0);
+                      }
+                  }
+              } else if (!id(high_speed_active)) {
+                  id(high_speed_start) = now;
+              }
+
+              // High-speed Compressor Stop
+              if (id(blower_speed_called).state < high_speed_stop_threshold) {
+                  if (id(high_speed_active)) {
+                      uint32_t elapsed_time = now - id(high_speed_stop);
+                      if (elapsed_time >= time_threshold) {
+                          id(high_speed_active) = false;
+                          id(compressor_speed_high).turn_off();
+                          ESP_LOGI("Compressor", "High-speed turned OFF");
+                      } else {
+                          ESP_LOGD("Compressor", "High-speed OFF requested, waiting for timer: %.2f s remaining", (time_threshold - elapsed_time) / 1000.0);
+                      }
+                  }
+              } else if (id(high_speed_active)) {
+                  id(high_speed_stop) = now;
+              }
+          } else {
+              ESP_LOGD("Compressor", "High-speed compressor logic skipped - Climate not cooling");
+          }
+
+  - interval: 100ms
+    id: blower_ramp_control
+    then:
+      - lambda: |-
+          if (id(ramp_blower) && id(blower_fan).state) {
+            // Sets ramp rate 0-100 over 20 seconds
+            const float transition_time = 20.0;
+            const float interval = 0.100; // 100ms
+            int steps = transition_time / interval;
+
+            // Calculate the difference between current and target blower speed
+            float diff = id(target_blower_speed) - id(current_blower_speed);
+
+            // Fixed step size for consistent speed change
+            const float step_size = 100.0 / steps;
+
+            // Determine the direction of the step
+            float step = (diff > 0) ? step_size : -step_size;
+
+            // Calculate the next speed, including the step
+            float next_speed = id(current_blower_speed) + step;
+
+            // Clamp the speed within boundaries (min: 1, max: 100)
+            next_speed = fmax(1, fmin(next_speed, 100));
+
+            if (fabs(diff) < fabs(step)) {
+                id(current_blower_speed) = (next_speed <= 1) ? 1 : next_speed;
+                id(ramp_blower) = false;
+
+                // Set the actual desired speed
+                auto final_call = id(blower_fan).make_call();
+                final_call.set_speed(id(current_blower_speed));
+                final_call.perform();
+            } else {
+                // Update the current blower speed smoothly
+                id(current_blower_speed) = next_speed;
+                auto call = id(blower_fan).make_call();
+                call.set_speed(id(current_blower_speed));
+                call.perform();
+            }
+          }
