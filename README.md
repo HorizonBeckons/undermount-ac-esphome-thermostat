@@ -10,8 +10,6 @@ The design goals for this project are:
 2. Minimize the noise generated from the blower.
 3. Maximize the efficiency of the system.
 
-A special thanks Mike from SmartyVan for the base configuration.
-
 &#x20;
 
 ## Main Features
