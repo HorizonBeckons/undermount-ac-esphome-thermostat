@@ -81,9 +81,10 @@ esphome:
           auto call = id(blower_fan).make_call();
           call.set_speed(0.0);  // Ensure the fan is off at startup
           call.perform();
+          id(ramp_blower) = false;
   project:
     name: anthonysecco.undermount-ac-esphome-thermostat
-    version: "0.2.0-beta"
+    version: "0.2.1-beta"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -205,14 +206,14 @@ sensor:
     device_class: ""
     entity_category: "diagnostic"
     icon: mdi:fan
+    disabled_by_default: true
     filters:
       - lambda: |-
-          if(id(blower_fan).state) {
-            return ((x * .01) * (id(blower_pwm).get_max_power() - id(blower_pwm).get_min_power()) + id(blower_pwm).get_min_power()) * 100;
-          } else {
+          if (!id(blower_power).is_enabled()) {
             return 0.0;
+          } else {
+            return x;
           }
-    disabled_by_default: true
 
   # Uncomment sensors below for Wi-Fi Diagnostics
   #- platform: wifi_signal
@@ -291,13 +292,48 @@ output:
             - light.turn_off: 
                 id: statusledlight
 
+  - platform: template
+    id: blower_pwm_filter
+    type: float
+    min_power: 0.15     # Minimum duty cycle to start blower
+    max_power: 0.98     # Max duty cycle per Undermount AC
+    power_supply: blower_power
+    write_action:
+      - lambda: |-
+          // The following steps produce reliable pleasant sound.  Blower appears to step every 4 % or so using linear transfer step function.
+          const float duty_cycles[24] = {
+              0.20, 0.20, 0.20, 0.20,  // Less than 20% has audible tone that is not pleasant.
+              0.20, 0.24, 0.28, 0.32,
+              0.36, 0.40, 0.44, 0.48, 0.52,
+              0.56, 0.60, 0.64, 0.68, 0.72,
+              0.76, 0.80, 0.84, 0.88, 0.92,
+              0.96
+          };
+
+          const float hysteresis_threshold = 0.02;
+
+          // Calculate the speed index
+          int speed_index;
+          if (state <= 0.0) {
+              speed_index = 0;  // Ensure zero maps directly to the first element
+          } else {
+              speed_index = round(state * (24 - 1));  // Adjusted to new array size
+              speed_index = fmax(1, fmin(23, speed_index));  // Clamp to range 1-23 for non-zero values
+          }
+
+          float duty_cycle = duty_cycles[speed_index];
+
+          // Apply hysteresis
+          if (fabs(id(blower_fan).speed - duty_cycle) > hysteresis_threshold) {
+              id(blower_pwm).set_level(duty_cycle);
+              ESP_LOGD("Blower PWM Filter", "State: %.2f, Speed Index: %d, Duty Cycle: %.2f", state, speed_index, duty_cycle);
+              id(blower_speed_called).publish_state(duty_cycle * 100);
+          }
+
   - platform: ledc # Output 1
     pin: 7
     id: blower_pwm
-    power_supply: blower_power
     frequency: 240 hz   # Frequency per Undermount AC
-    min_power: 0.19     # Minimum duty cycle to start blower
-    max_power: 0.98     # Max duty cycle per Undermount AC
     zero_means_zero: true
 
 power_supply: 
@@ -309,14 +345,29 @@ power_supply:
 fan:
   - platform: speed
     name: "Blower"
-    output: blower_pwm
+    output: blower_pwm_filter
     id: blower_fan
     disabled_by_default: true
-    on_turn_off:
-      - lambda: id(blower_speed_called).publish_state(id(blower_fan).speed);
-    on_speed_set:
-      - lambda: id(blower_speed_called).publish_state(id(blower_fan).speed);
-      
+
+number: 
+  - platform: template
+    name: "Minimum Cooling Blower Speed"
+    id: cooling_min_power
+    optimistic: true
+    min_value: 40 # SYSTEM PROECTION: >=40%  per UndermountAC to prevent frozen evaporator
+    max_value: 60
+    step: 1
+    unit_of_measurement: "%"
+    icon: "mdi:fan"
+    entity_category: "config"
+    restore_value: true
+    initial_value: 40 
+    on_value:
+      then:
+        - lambda: |-
+            float min_power = id(cooling_min_power).state / 100.0;
+            id(blower_pwm_filter).set_min_power(min_power);
+            ESP_LOGD("Cooling Min Power", "Updated min power to: %.2f", min_power);
 switch:  
   - platform: gpio # Output 3
     id: compressor_power
@@ -380,24 +431,22 @@ climate:
       - switch.turn_off: compressor_power
       - switch.turn_off: compressor_speed_high
       - lambda: |-
-          id(blower_pwm).set_min_power(0.19);
-          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
+          id(blower_pwm_filter).set_min_power(0.15);
       - fan.turn_on: blower_fan
 
     cool_action:
       - switch.turn_on: compressor_power
       - delay: 20s # Allows evaporator to cool briefly before pushing air so it's cold
       - lambda: |-
-          id(blower_pwm).set_min_power(0.40); // SYSTEM PROECTION: >=40%  per UndermountAC to prevent frozen evaporator
-          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: <=98%  per UndermountAC
+          float min_power = id(cooling_min_power).state / 100.0;
+          id(blower_pwm_filter).set_min_power(min_power); // User adjustable in home assistant.
       - fan.turn_on: blower_fan
       
     idle_action:
       - switch.turn_off: compressor_power
       - switch.turn_off: compressor_speed_high
       - lambda: |-
-          id(blower_pwm).set_min_power(0.19);
-          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
+          id(blower_pwm_filter).set_min_power(0.15);
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
       - delay: 20s # Push remaining residual air from evaporator. Increase 10s if you have long ducts.
@@ -407,8 +456,7 @@ climate:
       - switch.turn_off: compressor_power
       - switch.turn_off: compressor_speed_high
       - lambda: |-
-          id(blower_pwm).set_min_power(0.19);
-          id(blower_pwm).set_max_power(0.98); // SYSTEM PROECTION: 98% or less per UndermountAC
+          id(blower_pwm_filter).set_min_power(0.15);
           id(target_blower_speed) = 1;        // Ramp down to minimum speed
           id(ramp_blower) = true;
       - delay: 20s # Push remaining residual air from evaporator. Increase 10s if you have long ducts.
@@ -482,8 +530,8 @@ script:
             id(last_time) = now;
 
             // Get min and max blower pwm power thresholds
-            float min_output = id(blower_pwm).get_min_power();
-            float max_output = id(blower_pwm).get_max_power();
+            float min_output = id(blower_pwm_filter).get_min_power();
+            float max_output = id(blower_pwm_filter).get_max_power();
 
             // Initalize fan_speed
             int fan_speed;
@@ -550,7 +598,7 @@ script:
                           id(compressor_speed_high).turn_on();
                           ESP_LOGI("Compressor", "High-speed turned ON");
                       } else {
-                          ESP_LOGD("Compressor", "High-speed ON requested, waiting for timer: %d s remaining", (time_threshold - elapsed_time) / 1000.0);
+                          ESP_LOGD("Compressor", "High-speed ON requested, waiting for timer: %.0f s remaining", (time_threshold - elapsed_time));
                       }
                   }
               } else if (!id(high_speed_active)) {
@@ -566,7 +614,7 @@ script:
                           id(compressor_speed_high).turn_off();
                           ESP_LOGI("Compressor", "High-speed turned OFF");
                       } else {
-                          ESP_LOGD("Compressor", "High-speed OFF requested, waiting for timer: %d remaining", (time_threshold - elapsed_time) / 1000.0);
+                          ESP_LOGD("Compressor", "High-speed OFF requested, waiting for timer: %.0f s remaining", (time_threshold - elapsed_time));
                       }
                   }
               } else if (id(high_speed_active)) {
@@ -637,14 +685,14 @@ script:
                 effect: "Pulse"
 
 interval:
-  - interval: 150ms
+  - interval: 200ms
     id: blower_ramp_control # Ramps blower up/down smoothly over a set time
     then:
       - lambda: |-
           if (id(ramp_blower) && id(blower_fan).state) {
-            // Sets ramp rate 0-100 over 15 seconds
-            const float transition_time = 15.0;
-            const float interval = 0.150; // 150ms
+            // Sets ramp rate 0-100 over 10 seconds
+            const float transition_time = 10.0;
+            const float interval = 0.200; // 200ms
             int steps = transition_time / interval;
 
             // Calculate the difference between current and target blower speed
