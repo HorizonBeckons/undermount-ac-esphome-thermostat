@@ -22,7 +22,7 @@ jobs:
       matrix:
         #### Modify below here to match your project ####
         file:
-          - undermount-ac
+          - undermount-ac.yaml
         #### Modify above here to match your project ####
 
         esphome-version:
