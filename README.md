@@ -52,6 +52,10 @@ Use the "Install Firmware" link below to install the **pre-built firmware** dire
 
 [![ESPHome Install](https://img.shields.io/badge/Install%20ESPHome-blue?style=for-the-badge&logo=esphome)](https://esphome.github.io/esphome-flasher/?configuration=https://raw.githubusercontent.com/anthonysecco/undermount-ac-esphome-thermostat/main/undermount-ac.yaml)
 
+<esp-web-install-button manifest="firmware/anthonysecco.undermount-ac-esphome-thermostat.manifest.json.manifest.json"></esp-web-install-button>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
 Once installed, a red LED should start blinking on the device, and a wireless network named **"Undermount AC Failover AP"** will broadcast from the thermostat.
 
 The thermostat is now ready for physical installation.  Disconnect the USB cable, reattached the cover, and head to the RV.
