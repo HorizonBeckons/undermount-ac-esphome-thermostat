@@ -16,7 +16,7 @@ jobs:
       files: |
         undermount-ac.yaml
       esphome-version: 2025.4.0
-      combined-name: project-template
+      combined-name: anthonysecco.undermount-ac-esphome-thermostat
       #### Modify above here to match your project ####
 
       release-summary: ${{ github.event.release.body }}
