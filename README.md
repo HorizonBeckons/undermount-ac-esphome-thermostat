@@ -1,6 +1,6 @@
-# Undermount AC ESPHome Thermostat
+![image](https://github.com/user-attachments/assets/f090b563-4deb-4ac4-91a9-82fff0fcb047)
 
-## Description
+# Undermount AC ESPHome Thermostat
 
 This project implements the [Undermount AC ESPHome Thermostat](https://undermountac.com/pages/hass) for the V3 [Undermount AC](https://undermountac.com/) system and replaces the standard thermostat allowing the user to control the thermostat directly from [Home Assistant](https://www.home-assistant.io/).  It also adds additional capabilities not found in the standard thermostat.
 
@@ -10,7 +10,7 @@ The design goals for this project are:
 2. Minimize the noise generated from the blower.
 3. Maximize the efficiency of the system.
 
-&#x20;
+> **Disclaimer:** The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author be liable for any claim, damages, or other liability arising from the use of the Software.  This project is **not** endorsed by Undermount AC.
 
 ## Main Features
 
@@ -23,12 +23,11 @@ The design goals for this project are:
 
 ## Prerequisites
 
-1. **ESPHome Thermostat by Undermount AC** - \*Required\*
+You'll need an **ESPHome Thermostat by Undermount AC**.
 
-   You can purchase that from the Undermount AC website [here](https://undermountac.com/products/esphome-thermostat-controller-12-30v-dc)[.](https://undermountac.com/products/esphome-thermostat-controller-12-30v-dc)
-2. **ESPHome Thermostat by Undermount AC** - \*Required\*
+You can purchase that from the Undermount AC website [here](https://undermountac.com/products/esphome-thermostat-controller-12-30v-dc)[.](https://undermountac.com/products/esphome-thermostat-controller-12-30v-dc)
 
-   These instructions assume you know about Home Assistant and the ESPHome add-on.
+> ℹ️ **Note:** These instructions assume you know about Home Assistant and the ESPHome add-on.
 
 # Installation
 
@@ -37,34 +36,33 @@ Installation for the thermostat is straight forward.  At a high-level it is as 
 1. Program the thermostat
 2. Physically install it in the van
 3. Connect and configure in Home Assistant
-4. Test operation
+4. Understand and test operation
 
-Let's get started!  🚀
+Let's get started! 🚀
 
 ## Program Thermostat
 
-ESPHome and the configuration need to be loaded.
+The ESPHome firmware and configuration need to be loaded on the thermostat.
 
-* Remove the top cover and connect the Undermount AC Thermostat to your computer using a USB cable.
-* Use the "Install Firmware" link below to install the **pre-built firmware** found [here](https://github.com/anthonysecco/rixen-mcs6-esphome-thermostat/blob/main/rixen-mcs6-thermostat.yaml) directly to the ESPHome HVAC Controller via USB from Chromium-based browser.
+Remove the top cover and connect the **UART interface** on the Undermount AC Thermostat to your computer using a USB cable.
 
-🚀[Install Firmware](https://esphome.github.io/web-installer/?config_url=https://raw.githubusercontent.com/anthonysecco/rixen-mcs6-esphome-thermostat/main/rixen-mcs6-thermostat.yaml)
+Use the "Install Firmware" link below to install the **pre-built firmware** directly to the ESPHome HVAC Controller via USB from Chromium-based browser.
 
-Once installed, a red LED should start blinking on the device, and a wireless network named **"Undermount AC Failover AP"** will be broadcast from the device. 
+   📩 [Install Firmware](https://esphome.github.io/web-installer/?config_url=https://raw.githubusercontent.com/anthonysecco/undermount-ac-esphome-thermostat/main/undermount-ac.yaml)
 
-The thermostat is now ready for physical installation.  Disconnect the USB cable and reattach the cover.
+Once installed, a red LED should start blinking on the device, and a wireless network named **"Undermount AC Failover AP"** will broadcast from the thermostat.
+
+The thermostat is now ready for physical installation.  Disconnect the USB cable, reattached the cover, and head to the RV.
 
 ## Physical Installation
 
-Locating the best location for the thermostat is important for accurate and consistent readings.  The temperature probe at the end of the 3 meter cable from the thermostat should be placed 1.25-1.5m or 4-5 ft from the floor, away from a window or door and not on a surface attached to the exterior of the van.
+Locating the best location for the thermostat is important for accurate and consistent readings.  The temperature probe at the end of the 3 meter cable from the thermostat should be placed 1.25-1.5M or 4-5FT from the floor, away from a window or door and not on a surface attached to the exterior of the van.
 
 Once you identify the location, mount the thermostat controller and the temperature probe.  Now you're ready to wire it up.
 
 ### Hardware & Wiring
 
-&#x20;
-
-⚠️ If not obvious, power should be disconnected from the Undermount AC system during thermostat installation. &#x20;
+> ⚠️ **Warning:** Power should be disconnected from the Undermount system during thermostat installation.
 
 Wire the thermostat according to the table below for the V3 system:
 
@@ -85,12 +83,12 @@ Output 5 & 6 are unused and can be configured for other purposes.  They are gro
 
 ### Connect to Wi-Fi
 
-With the wiring complete, apply power to the Undermount AC system. &#x20;
+With the wiring complete, apply power to the Undermount AC system.
 
 * The onboard RGD LED should blink red and a wireless network "**Undermount AC Failover AP**" should become available.
 * Using your computer, connect to "**Undermount AC Failover AP**" using the password: 12345678.
 * A **captive portal** will load. Select the Wi-Fi network where your **Home Assistant** server is running and provide your credentials.
-* Once applied, the thermostat will reboot and connect to the target Wi-Fi network.
+* Once applied, the thermostat will reboot and connect to the target Wi-Fi network.  The LED will stop blinking red if connected.
 
 ### Configure Home Assistant
 
@@ -103,11 +101,11 @@ You should now see the **Undermount AC** Climate Component in Home Assistant.
 
 ### Adopt in ESPHome (Optional)
 
-In your ESPHome dashboard, you should see the device with the option to “Adopt” (this may require restarting Home Assistant). Click Adopt, and you’ll be able to rename the device and install the updated configuration. From this point on, you have full control over the YAML configuration of the thermostat.
+In your ESPHome dashboard, you should see the device with the option to **“Adopt”** (this may require restarting Home Assistant). Click **Adopt**, and you’ll be able to rename the device and install the updated configuration. From this point on, you have full control over the YAML configuration of the thermostat.
 
 ## Entities
 
-You should now see the thermostat in Home Assistant.  Go to\*\* Settings >> Devices >> ESPHome >> Undermount AC\*\* and you should see the following.  Diagnostic sensors will be disabled by default.\\
+You should now see the thermostat in Home Assistant.  Go to **Settings >> Devices >> ESPHome >> Undermount AC** and you should see the following.  Diagnostic sensors will be disabled by default.
 
 ### Controls
 
@@ -134,19 +132,6 @@ You should now see the thermostat in Home Assistant.  Go to\*\* Settings >> De
 | Output 3 (Compressor Power)  | Indicates if compressor is being called |
 | Ramp Blower                  | Indicates if blower is changing speed |
 
-## Status Light
-
-The physical unit will show the following status lights when in operation.
-
-| Light Behavior    | Description                         | 
-| ----------------- | ----------------------------------- |
-| Flashing Red      | Not connected to Home Assistant     |
-| Faint Blue        | Idle (on but not currently cooling) |
-| Slow Pulsing Blue | Cooling                             |
-| Fast Pulsing Blue | Cooling - Compressor on high        |
-| Slow Pulsing Cyan | Fan Only Mode                       |
-| Steady Orange     | Thermostat Off (System in Standby)  |
-
 # Operations
 
 The following is not an exhaustive list of how the climate component works in ESPHome.  Instread this provides details specific to this system.
@@ -164,13 +149,13 @@ The climate component refers to the blower as 'fan'.  References to 'blower' and
 ### Auto Mode
 The Auto Mode engages dynamic blower speed.  This blower adjusts speed automatically to maintain the desired target temperature.  This is the recommended mode and should be a "set it and forget it" configuration.
 
-Dynamic blower speed is driven through PID control loop logic.
+> Dynamic blower speed is driven through PID control loop logic.  Future versions will exposed tuning controls in Home Assitant.
 
 ### Slow Ramping
 The blower will change speeds slowly to minimize audible changes to occupants.  This includes transistion from Off, Idle, and Cooling modes.
 
 ## Thermostat Modes
-The thermostat has three actives modes.
+The thermostat has three modes.
 
 | Mode | Description
 | ----- | ---------- |
@@ -179,13 +164,30 @@ The thermostat has three actives modes.
 | FAN ONLY | Only blower is active. |
 | IDLE | Actual temperature is below set point.  Transistory state. |
 
+### Status Light
+
+The physical unit will show the following status lights when in operation.
+
+| Light Behavior    | Description                         | 
+| ----------------- | ----------------------------------- |
+| Flashing Red      | Not connected to Home Assistant     |
+| Faint Blue        | IDLE |
+| Slow Pulsing Blue | COOLING                             |
+| Fast Pulsing Blue | COOLING - High-Speed Compressor     |
+| Slow Pulsing Cyan | FAN ONLY                            |
+| Steady Orange     | OFF             |
+
 ### OFF
 This is self-explainatory.  System will remain off until switched back to another mode.
 
 When transitioning into OFF, the blower will ramp down to minimum speed and remain on for 30 seconds to push residual cool air.  The blower will remain off for the duration of the OFF state.
 
+> Running the blower on idle for >30s will likely start to push condesation on the evaporator coils back into the air.
+
 ### Cooling
-Cooling will start when the actual temperature is 0.5C above the set temperature.  When cooling starts, the compressor will immediately be called.  The blower will start after 15 seconds.
+Cooling will start when the actual temperature is 0.5C above the set temperature.  When cooling starts, the compressor will immediately be called.  
+
+> The blower has a delayed start of 15 seconds to allow the evaporator to cool slightly before pushing air.
 
 #### High-Speed Cooling
 If enabled, the thermostat will engage the high-speed compressor mode under high cooling demands.
@@ -194,12 +196,14 @@ When the Enable High-Speed Cooling switch is set to **ON** in Home Assistant, th
 
 If the High-Speed Cooling switch is set to **OFF**, low speed compressor mode will be used regardless of blower speed.
 
-Note: Undermount AC compressor has a total of three speeds, however, in daily operation only two can be activated, Low or (Medium/High).  Most users find Medium (the default) to be sufficent.  Refer to Undermount AC documentation for details.
+> ℹ️ **Note:** the Undermount AC compressor has a total of three speeds, however, in daily operation only two can be activated, Low or (Medium/High).  Most users find Medium (the default) to be sufficent.  Refer to Undermount AC documentation for details.
 
 ### IDLE
 The is a transistory state and is not selectable.  When in COOLING or FAN ONLY mode and the actual temperature is 1C below the set temperature, the thermostat will transistion to IDLE state.
 
 When transitioning into IDLE, the blower will slowly ramp down to minimum speed and run for 30 seconds to push out residual cool air.  The blower will remain off for the duration of the IDLE state.
+
+> Running the blower on idle for >30s will likely start to push condesation on the evaporator coils back into the air.
 
 ## Recommended Settings
 Most users will get the best results setting the fan to **AUTO** and High-Speed Compressor to **ON**.
@@ -214,9 +218,19 @@ The compressor will remain **OFF** or **ON** for at least 2 minutes.  In additio
 The *minmum* speed will increase in **Cooling Mode** to prevent the evaporator from freezing.  This should be no less than 40%, but may be increased if necessary. 
  This can be increased in the YAML configuration if evaporator freezing becomes a problem.
 
+# Conclusion
+
+At this point, you've completed the installation.  You may create your dashboard and setup automations to your heart's content.  
+
+## Contact
+
+Please raise an issue for enhancements, bugs, or any other questions regarding this project.  Thanks!
+
+⭐ Star this project if you found it useful.
+
 ## Contribution
 
-Special thanks to Mike from SmartyVan for the initial code on this thermostat.
+> Special thanks to Mike from SmartyVan for the initial code on this thermostat [here](https://github.com/mikegoubeaux/UndermountAC).
 
 If you would like to contribute:
 
@@ -226,14 +240,6 @@ If you would like to contribute:
 4. Push to the branch: `git push origin feature-name`
 5. Submit a pull request.
 
-## Disclaimer
-
-The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors be liable for any claim, damages, or other liability arising from the use of the Software.
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
-
-## Contact
-
-Please raise an issue for enhancements, bugs, or any other questions regarding this project.  Thanks!
