@@ -2,7 +2,7 @@
 
 ## Description
 
-This project implements  the [Undermount AC ESPHome Thermostat](https://undermountac.com/pages/hass) for the V3 [Undermount AC](https://undermountac.com/) system and replaces the standard thermostat and allows the user to control the thermostat directly from [Home Assistant](https://www.home-assistant.io/).  It also adds additional capabilities not found in the standard thermostat.
+This project implements the [Undermount AC ESPHome Thermostat](https://undermountac.com/pages/hass) for the V3 [Undermount AC](https://undermountac.com/) system and replaces the standard thermostat allowing the user to control the thermostat directly from [Home Assistant](https://www.home-assistant.io/).  It also adds additional capabilities not found in the standard thermostat.
 
 The design goals for this project are:
 
