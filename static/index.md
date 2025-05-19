@@ -48,12 +48,11 @@ Remove the top cover and connect the **UART interface** on the Undermount AC The
 
 Use the "Install Firmware" link below to install the **pre-built firmware** directly to the ESPHome HVAC Controller via USB from Chromium-based browser.
 
-## Install Undermount AC Thermostat
-
 <esp-web-install-button manifest="firmware/anthonysecco.undermount-ac-esphome-thermostat.manifest.json"></esp-web-install-button>
 
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 
+## Install Undermount AC Thermostat
 
 Once installed, a red LED should start blinking on the device, and a wireless network named **"Undermount AC Failover AP"** will broadcast from the thermostat.
 
