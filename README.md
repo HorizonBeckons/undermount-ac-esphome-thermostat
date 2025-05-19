@@ -1,4 +1,4 @@
-# Project Title
+# Undermount AC ESPHome Thermostat
 
 ## Description
 
