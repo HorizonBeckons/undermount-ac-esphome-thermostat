@@ -10,7 +10,7 @@ The design goals for this project are:
 2. Minimize the noise generated from the blower.
 3. Maximize the efficiency of the system.
 
-> **Disclaimer:** The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author be liable for any claim, damages, or other liability arising from the use of the Software.  This project is **not** endorsed by Undermount AC.
+> **Disclaimer:** The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author be liable for any claim, damages, or other liability arising from the use of the Software.  This project is **not** associated or endorsed by Undermount AC.
 
 ## Main Features
 
