@@ -114,6 +114,7 @@ You should now see the thermostat in Home Assistant.  Go to **Settings >> Devic
 | Air Conditioner              | Main climate control component    |
 | Enable High-speed Compressor | Allow high-speed compressor to be called under high loads |
 | Blower                       | Disabled by default.  Allows manual control of blower |
+| Minimum Cooling Blower Speed | Sets minimum blower speed while cooling. Range (40-60%)
 
 ### Sensors
 
