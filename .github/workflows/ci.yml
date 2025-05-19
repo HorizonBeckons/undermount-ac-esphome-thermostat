@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         file:
-          - undermount-ac.yaml
+          - undermount-ac
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4.1.7
