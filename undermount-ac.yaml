@@ -84,7 +84,7 @@ esphome:
           id(ramp_blower) = false;
   project:
     name: anthonysecco.undermount-ac-esphome-thermostat
-    version: "0.3.1-beta"
+    version: "0.3.2"
 
 esp32:
   board: esp32-s3-devkitc-1
