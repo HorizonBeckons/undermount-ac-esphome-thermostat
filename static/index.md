@@ -12,6 +12,8 @@ The design goals for this project are:
 
 > **Disclaimer:** The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author be liable for any claim, damages, or other liability arising from the use of the Software.  This project is **not** associated or endorsed by Undermount AC.
 
+> If you wish to review the code or have a more technical understanding of the design click the GitHub link at the top of the page.
+
 ## Main Features
 
 * Control your Undermount AC via Home Assistant
@@ -225,4 +227,4 @@ The *minmum* speed will increase in **Cooling Mode** to prevent the evaporator f
 
 # Conclusion
 
-At this point, you've completed the installation.  You may create your dashboard and setup automations to your heart's content.  
+At this point, you've completed the installation.  You may create your dashboard and setup automations to your heart's content.
