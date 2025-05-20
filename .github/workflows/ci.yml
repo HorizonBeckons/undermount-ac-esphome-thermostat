@@ -1,32 +1,44 @@
-name: Publish Firmware
+name: CI
 
 on:
-  release:
-    types: [published]
+  pull_request:
+    paths:
+      - '*.yaml'
+      - '.github/workflows/ci.yml'
+  schedule:
+    - cron: '0 0 * * *'
 
-permissions:
-  contents: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  build-firmware:
-    name: Build Firmware
-    uses: esphome/workflows/.github/workflows/build.yml@2025.4.0
-    with:
-      #### Modify below here to match your project ####
-      files: |
-        undermount-ac.yaml
-      esphome-version: 2025.4.0
-      combined-name: anthonysecco.undermount-ac-esphome-thermostat
-      #### Modify above here to match your project ####
+  ci:
+    name: Building ${{ matrix.file }} / ${{ matrix.esphome-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        #### Modify below here to match your project ####
+        file:
+          - undermount-ac
+        #### Modify above here to match your project ####
 
-      release-summary: ${{ github.event.release.body }}
-      release-url: ${{ github.event.release.html_url }}
-      release-version: ${{ github.event.release.tag_name }}
-
-  upload-to-release:
-    name: Upload to Release
-    uses: esphome/workflows/.github/workflows/upload-to-gh-release.yml@2025.4.0
-    needs:
-      - build-firmware
-    with:
-      version: ${{ github.event.release.tag_name }}
+        esphome-version:
+          - stable
+          - beta
+          - dev
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: ESPHome ${{ matrix.esphome-version }}
+        uses: esphome/build-action@v7
+        with:
+          yaml-file: ${{ matrix.file }}.yaml
+          version: ${{ matrix.esphome-version }}
+      - name: ESPHome ${{ matrix.esphome-version }} Factory
+        uses: esphome/build-action@v7
+        with:
+          yaml-file: ${{ matrix.file }}.factory.yaml
+          version: ${{ matrix.esphome-version }}
