@@ -1,7 +1,7 @@
 ## Hardware Compatibility
 This fork is specifically adapted for Undermount AC v2 systems. Key differences from the original v3 code:
  
- V2 Undermount AC System Harness to ESPHome HVAC Controller Connector Matrix:
+V2 Undermount AC System Harness to ESPHome HVAC Controller Connector Matrix:
  Output 1 - Blower Speed (Red Wire)
  Output 2 - Blower Power On/Off (Yellow Wire) 
  Output 3 - Compressor Power (Blue Wire)
