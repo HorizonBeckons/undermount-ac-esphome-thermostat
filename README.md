@@ -1,4 +1,25 @@
-# Description
+## Hardware Compatibility
+This fork is specifically adapted for Undermount AC v2 systems. Key differences from the original v3 code:
+ 
+ V2 Undermount AC System Harness to ESPHome HVAC Controller Connector Matrix:
+ Output 1 - Blower Speed (Red Wire)
+ Output 2 - Blower Power On/Off (Yellow Wire) 
+ Output 3 - Compressor Power (Blue Wire)
+ Output 4 - High-Speed Compressor ( Wire)
+ Output 5 - Unused
+ Output 6 - Unused
+ POS - DC+ IN  (Red/White Wire)
+ NEG - DC- IN (Black Wire)
+
+- Blower Speed (PWM 50-500Hz Compatible with Version 3 240Hz but also tested at 50Hz)
+- Ported and tested for v2 hardware compatibility
+- Added comprehensive compressor protection system
+- Enhanced PID control with safety features
+- Implemented diagnostic monitoring and emergency handling
+- Validated on v2 hardware with cursory testing
+- All safety features tested and confirmed working on v2 system with the exception of the Auto High Speed Compressor Mode
+
+# (Original) V3 Description
 
 The purpose of this project is to utilize the ESPHome Undermount AC thermostat with the Undermount AC V3 system for integration with Home Assistant.
 
