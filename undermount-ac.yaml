@@ -1,14 +1,26 @@
-## Written by https://github.com/anthonysecco
+## Originally written by https://github.com/anthonysecco for Undermount AC v3
 # Special thanks to Mike Goubeaux (Smarty Van) for the base code
-# To be used with Undermount AC ESP Home Thermostat and Undermount AC System
+# 
+# Adapted by Chris Herman (HorizonBeckons) for Undermount AC v2 systems with safety and compatability enhancements:
+# - Ported and tested for v2 hardware compatibility
+# - Added comprehensive compressor protection system
+# - Enhanced PID control with safety features
+# - Implemented diagnostic monitoring and emergency handling
+# - Testing and validation on v2 hardware
+#
+# - Auto Mode High Speed Compressor Functionality remains untested
+#
+# To be used with Undermount AC ESP Home Thermostat and  v2 System
 
-# Connector Matrix:
-# Output 1 - Blower Speed (White Wire)
-# Output 2 - Blower Power On/Off (Brown Wire) 
+# V2 Connector Matrix:
+# Output 1 - Blower Speed (Red Wire)
+# Output 2 - Blower Power On/Off (Yellow Wire) 
 # Output 3 - Compressor Power (Blue Wire)
-# Output 4 - High-Speed Compressor (Green Wire)
+# Output 4 - High-Speed Compressor ( Wire)
 # Output 5 - Unused
 # Output 6 - Unused
+# POS - DC+ IN  (Red/White Wire)
+# NEG - DC- IN (Black Wire)
 
 # Substitutions
 ################################################################################
@@ -20,15 +32,15 @@ substitutions:
   # Please refer to the readme file.
   # General PID control education: https://www.youtube.com/watch?v=dZ8lzDi3cXY
 
-  ### PID Tune Control ###
-  kp: '0.2' # Proportional
-  ki: '0.000334' # Integral
-  kd: '0.0' # Derivative
+  ### PID Tune Control - ENHANCED FOR TESTING ###
+  kp: '0.5'                # INCREASED from 0.2 to 0.5 for more response
+  ki: '0.000334'           # Integral
+  kd: '0.0'                # Derivative
   integral_clamp_factor: '1.5' # Dynamic Integral clamp to prevent windup
   ########################
 
   # Defaults:  
-  # kp '0.2' - Add 20% blower speed per degree C
+  # kp '0.5' - Add 50% blower speed per degree C (increased for testing)
   # ki '0.000334' - Ramp blower to 100% over 10 minutes if set point not reached
   # kd '0.0' - Not used.
   # integral_clamp_factor '1.5' - Limit integral wind up.  Intregal can only wind up to 100% if error is greater than 1C.
@@ -67,6 +79,26 @@ globals:
     type: bool
     initial_value: 'false'
 
+  # Compressor Protection Globals
+  - id: compressor_last_off_time
+    type: uint32_t
+    initial_value: '0'
+  - id: compressor_protection_active
+    type: bool
+    initial_value: 'false'
+  - id: compressor_start_time
+    type: uint32_t
+    initial_value: '0'
+  - id: compressor_short_cycle_protection
+    type: bool
+    initial_value: 'false'
+  - id: pending_idle_request
+    type: bool
+    initial_value: 'false'
+  - id: pending_off_request
+    type: bool
+    initial_value: 'false'
+
 # Board Configuration
 ################################################################################
 esphome:
@@ -76,12 +108,16 @@ esphome:
     priority: -10
     then:
       - lambda: |-
+          id(blower_pwm_filter).set_min_power(0.0);
+      - lambda: |-
           id(integral) = 0.0;
           id(previous_error) = 0.0;
           auto call = id(blower_fan).make_call();
-          call.set_speed(0.0);  // Ensure the fan is off at startup
+          call.set_speed(0.0);
           call.perform();
           id(ramp_blower) = false;
+          id(compressor_last_off_time) = millis();
+
   project:
     name: anthonysecco.undermount-ac-esphome-thermostat
     version: "0.3.2"
@@ -111,7 +147,7 @@ captive_portal:
 # Core Services
 ################################################################################
 logger:
-  level: INFO
+  level: VERY_VERBOSE
 api:
 
 ota:
@@ -201,19 +237,47 @@ sensor:
   - platform: template
     id: blower_speed_called
     name: "Output 1 (Blower Speed)"
-    accuracy_decimals: 0
     unit_of_measurement: "%"
-    device_class: ""
-    entity_category: "diagnostic"
+    accuracy_decimals: 0
+    entity_category: diagnostic
     icon: mdi:fan
-    disabled_by_default: true
+    disabled_by_default: true   # enable in HA once
     filters:
       - lambda: |-
-          if (!id(blower_power).is_enabled()) {
-            return 0.0;
-          } else {
-            return x;
-          }
+          // Hide value only when the fan entity itself is OFF
+          return id(blower_fan).state ? x : 0.0;
+
+  - platform: template
+    id: compressor_protection_remaining
+    name: "Compressor Protection Time Remaining"
+    unit_of_measurement: "s"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    icon: "mdi:timer-sand"
+    disabled_by_default: true
+    lambda: |-
+      uint32_t time_since_off = millis() - id(compressor_last_off_time);
+      if (time_since_off < 120000) {
+        return (120000 - time_since_off) / 1000.0;
+      }
+      return 0.0;
+
+  - platform: template
+    id: compressor_short_cycle_remaining
+    name: "Compressor Short Cycle Time Remaining"
+    unit_of_measurement: "s"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    icon: "mdi:timer-sand"
+    disabled_by_default: true
+    lambda: |-
+      if (id(compressor_short_cycle_protection)) {
+        uint32_t time_since_start = millis() - id(compressor_start_time);
+        if (time_since_start < 120000) {
+          return (120000 - time_since_start) / 1000.0;
+        }
+      }
+      return 0.0;
 
   # Uncomment sensors below for Wi-Fi Diagnostics
   #- platform: wifi_signal
@@ -274,6 +338,27 @@ binary_sensor:
       return id(ramp_blower);
     disabled_by_default: true
 
+  - platform: template
+    name: "Compressor Protection Active"
+    id: compressor_protection_status
+    device_class: "safety"
+    entity_category: "diagnostic"
+    icon: "mdi:shield-check"
+    lambda: |-
+      uint32_t time_since_off = millis() - id(compressor_last_off_time);
+      return time_since_off < 120000;
+    disabled_by_default: true
+
+  - platform: template
+    name: "Compressor Short Cycle Protection Active"
+    id: compressor_short_cycle_status
+    device_class: "safety"
+    entity_category: "diagnostic"
+    icon: "mdi:shield-lock"
+    lambda: |-
+      return id(compressor_short_cycle_protection);
+    disabled_by_default: true
+
 #Outputs
 ################################################################################
 output:
@@ -295,14 +380,22 @@ output:
   - platform: template
     id: blower_pwm_filter
     type: float
-    min_power: 0.15     # Minimum duty cycle to start blower
-    max_power: 0.98     # Max duty cycle per Undermount AC
+    min_power: 0.00     # Keep at 0 for true off capability
+    max_power: 0.98     
     power_supply: blower_power
     write_action:
       - lambda: |-
-          // The following steps produce reliable pleasant sound.  Blower appears to step every 4 % or so using linear transfer step function.
+          // Handle true zero case
+          if (state <= 0.0) {
+              id(blower_pwm).set_level(0.0);
+              id(blower_speed_called).publish_state(0.0);
+              ESP_LOGD("Blower PWM Filter", "Blower OFF - State: %.2f, Duty: 0.00", state);
+              return;
+          }
+
+          // Rest of the existing logic for non-zero speeds
           const float duty_cycles[24] = {
-              0.20, 0.20, 0.20, 0.20,  // Less than 20% has audible tone that is not pleasant.
+              0.00, 0.20, 0.20, 0.20,
               0.20, 0.24, 0.28, 0.32,
               0.36, 0.40, 0.44, 0.48, 0.52,
               0.56, 0.60, 0.64, 0.68, 0.72,
@@ -312,18 +405,11 @@ output:
 
           const float hysteresis_threshold = 0.02;
 
-          // Calculate the speed index
-          int speed_index;
-          if (state <= 0.0) {
-              speed_index = 0;  // Ensure zero maps directly to the first element
-          } else {
-              speed_index = round(state * (24 - 1));  // Adjusted to new array size
-              speed_index = fmax(1, fmin(23, speed_index));  // Clamp to range 1-23 for non-zero values
-          }
+          int speed_index = round(state * (24 - 1));
+          speed_index = fmax(1, fmin(23, speed_index));
 
           float duty_cycle = duty_cycles[speed_index];
 
-          // Apply hysteresis
           if (fabs(id(blower_fan).speed - duty_cycle) > hysteresis_threshold) {
               id(blower_pwm).set_level(duty_cycle);
               ESP_LOGD("Blower PWM Filter", "State: %.2f, Speed Index: %d, Duty Cycle: %.2f", state, speed_index, duty_cycle);
@@ -349,25 +435,55 @@ fan:
     id: blower_fan
     disabled_by_default: true
 
-number: 
+################################################################################
+# Adjustable minimum blower speed used *only* when air should be moving
+################################################################################
+number:
   - platform: template
-    name: "Minimum Cooling Blower Speed"
     id: cooling_min_power
+    name: "Minimum Cooling Blower Speed"
     optimistic: true
-    min_value: 40 # SYSTEM PROECTION: >=40%  per UndermountAC to prevent frozen evaporator
+    min_value: 20            # TEMPORARILY REDUCED from 40% to see PID action
     max_value: 60
     step: 1
     unit_of_measurement: "%"
     icon: "mdi:fan"
     entity_category: "config"
     restore_value: true
-    initial_value: 40 
+    initial_value: 30        # TEMPORARILY REDUCED from 40% to 30%
+
+    # Enhanced protection logic
     on_value:
       then:
         - lambda: |-
-            float min_power = id(cooling_min_power).state / 100.0;
-            id(blower_pwm_filter).set_min_power(min_power);
-            ESP_LOGD("Cooling Min Power", "Updated min power to: %.2f", min_power);
+            // Only apply cooling minimums when compressor is actually running
+            if (id(compressor_power).state && 
+                id(undermount_thermostat).action == CLIMATE_ACTION_COOLING) {
+              
+              float min_power = id(cooling_min_power).state / 100.0;
+              
+              // Apply higher minimum if high-speed compressor is active
+              if (id(compressor_speed_high).state) {
+                min_power = fmax(min_power, 0.70);  // 70% minimum for high-speed
+                ESP_LOGI("Protection", "High-speed compressor: enforcing 70%% minimum");
+              }
+              
+              id(blower_pwm_filter)->set_min_power(min_power);
+              ESP_LOGD("Cooling Min Power", "Updated min power to: %.2f", min_power);
+            }
+
+button:
+  - platform: template
+    name: "Trigger PID Test"
+    on_press:
+      - lambda: |-
+          ESP_LOGW("TEST", "=== MANUAL PID TRIGGER ===");
+          ESP_LOGW("TEST", "Current state: Mode=%d, Fan_Mode=%d, Action=%d", 
+                   id(undermount_thermostat).mode,
+                   id(undermount_thermostat).fan_mode,
+                   id(undermount_thermostat).action);
+      - script.execute: climate_fan_auto_pid
+
 switch:  
   - platform: gpio # Output 3
     id: compressor_power
@@ -376,6 +492,25 @@ switch:
       inverted: true
     restore_mode: ALWAYS_OFF
     internal: true
+    # Add protection to the switch itself
+    on_turn_off:
+      - lambda: |-
+          // Check if short cycle protection should prevent this
+          uint32_t time_since_start = millis() - id(compressor_start_time);
+          bool protection_active = (time_since_start < 120000 && id(compressor_short_cycle_protection));
+          
+          if (protection_active) {
+            ESP_LOGW("Protection", "Compressor turn-off blocked by short cycle protection: %.1f seconds remaining", 
+                     (120000 - time_since_start) / 1000.0);
+            // Immediately turn it back on
+            id(compressor_power).turn_on();
+            return;
+          }
+          
+          // Protection not active, allow normal shutdown
+          ESP_LOGI("Protection", "Compressor shutdown allowed - protection expired");
+          id(compressor_last_off_time) = millis();
+          id(compressor_short_cycle_protection) = false;
 
   - platform: gpio # Output 4
     id: compressor_speed_high
@@ -419,11 +554,11 @@ climate:
       min_temperature: 65 °F
       max_temperature: 95 °F
 
-    min_cooling_off_time: 2min  # SYSTEM PROECTION: >=2min per UndermountAC to prevent short cycle damage
-    min_cooling_run_time: 2min  # SYSTEM PROECTION: >=2min per UndermountAC to prevent short cycle damage
-    min_idle_time: 2min         # Sets minimum time thermostat remains in idle state.
-    min_fanning_off_time: 2min  # Sets minimum time blower must remain off before it can be turned on again.
-    min_fanning_run_time: 2min  # Sets minimum time blower must stay on once it has been activated.
+    min_cooling_off_time: 2min  # SYSTEM PROTECTION: >=2min per UndermountAC to prevent short cycle damage
+    min_cooling_run_time: 2min  # SYSTEM PROTECTION: >=2min per UndermountAC to prevent short cycle damage
+    min_idle_time: 10s          # Reduced for faster fan-only transitions
+    min_fanning_off_time: 1s    # Minimal delay for fan-only responsiveness 
+    min_fanning_run_time: 1s    # Minimal delay for fan-only responsiveness
     cool_deadband: 0.5 °C       # Maintain IDLE until this degree over set point
     cool_overrun: 1.0 °C        # Maintain COOL until this degree below set point
 
@@ -431,36 +566,141 @@ climate:
       - switch.turn_off: compressor_power
       - switch.turn_off: compressor_speed_high
       - lambda: |-
-          id(blower_pwm_filter).set_min_power(0.15);
+          // Only reset compressor protection if we're coming FROM a cooling state
+          // If compressor is already off, don't interfere with existing protection timers
+          if (id(compressor_power).state) {
+            // We were cooling, now going to fan-only - record the transition
+            id(compressor_last_off_time) = millis();
+            id(compressor_protection_active) = false;
+            id(compressor_short_cycle_protection) = false;
+            ESP_LOGI("Protection", "Cooling->Fan-only: Reset compressor protection");
+          } else {
+            // Compressor was already off - don't touch protection timers
+            ESP_LOGI("Protection", "Off->Fan-only: Preserving existing compressor protection state");
+          }
+          
+          // Clear any pending requests since we're going to fan-only
+          id(pending_off_request) = false;
+          id(pending_idle_request) = false;
+          
+          // Fan-only mode uses NO minimum (0%) - let PID control the speed completely
+          id(blower_pwm_filter).set_min_power(0.00);
+          ESP_LOGI("Protection", "Fan-only mode: 0%% minimum - PID has full control");
       - fan.turn_on: blower_fan
+      - script.execute: climate_fan_auto_pid
+      - script.execute: force_fan_only_start
 
     cool_action:
-      - switch.turn_on: compressor_power
-      - delay: 20s # Allows evaporator to cool briefly before pushing air so it's cold
       - lambda: |-
+          // Check if we need compressor protection delay
+          uint32_t time_since_off = millis() - id(compressor_last_off_time);
+          bool protection_needed = (time_since_off < 120000); // 2 minutes
+          
+          if (protection_needed) {
+            ESP_LOGW("Protection", "Compressor protection: %.1f seconds remaining", 
+                     (120000 - time_since_off) / 1000.0);
+          }
+      - switch.turn_on: compressor_power
+      - lambda: |-
+          id(compressor_protection_active) = true;
+          id(compressor_start_time) = millis(); // Record start time for short cycle protection
+          id(compressor_short_cycle_protection) = true;
+          ESP_LOGI("Protection", "Compressor started - short cycle protection active");
+      - delay: 10s # Reduced delay - Allows evaporator to cool briefly before pushing air so it's cold
+      - lambda: |-
+          // Apply strict cooling minimums when compressor is running
           float min_power = id(cooling_min_power).state / 100.0;
-          id(blower_pwm_filter).set_min_power(min_power); // User adjustable in home assistant.
+          
+          // Ensure absolute minimum of 30% for evaporator protection (reduced for testing)
+          min_power = fmax(min_power, 0.30);
+          
+          id(blower_pwm_filter).set_min_power(min_power);
+          ESP_LOGI("Protection", "Cooling mode: %.0f%% minimum for evaporator protection", 
+                   min_power * 100);
       - fan.turn_on: blower_fan
+      # CRITICAL FIX: Add PID trigger for cooling mode
+      - script.execute: climate_fan_auto_pid
       
     idle_action:
-      - switch.turn_off: compressor_power
+      - switch.turn_off: compressor_power  # This will be blocked by switch protection if needed
       - switch.turn_off: compressor_speed_high
-      - lambda: |-
-          id(blower_pwm_filter).set_min_power(0.15);
-          id(target_blower_speed) = 1;        // Ramp down to minimum speed
-          id(ramp_blower) = true;
-      - delay: 20s # Push remaining residual air from evaporator. Increase 10s if you have long ducts.
-      - fan.turn_off: blower_fan
+      - if:
+          condition:
+            lambda: |-
+              // Check if compressor actually turned off
+              return !id(compressor_power).state;
+          then:
+            # Compressor is OFF - proceed with normal idle sequence
+            - lambda: |-
+                id(blower_pwm_filter).set_min_power(0.20);
+                id(target_blower_speed) = 20;  // 20% for comfort
+                id(ramp_blower) = true;
+                ESP_LOGI("Protection", "Idle mode: 20%% minimum for residual circulation");
+            - delay: 20s # Push remaining residual air from evaporator
+            - fan.turn_off: blower_fan
+          else:
+            # Compressor is STILL ON due to protection - maintain cooling operation
+            - lambda: |-
+                ESP_LOGW("Protection", "CRITICAL: Compressor protected - maintaining cooling airflow for evaporator safety!");
+                id(pending_idle_request) = true;
+                
+                // Keep full cooling airflow to prevent evaporator freeze
+                float min_power = id(cooling_min_power).state / 100.0;
+                min_power = fmax(min_power, 0.30); // Ensure minimum 30% for evaporator protection
+                id(blower_pwm_filter).set_min_power(min_power);
+                
+                // Keep fan running for evaporator protection
+                auto call = id(blower_fan).make_call();
+                call.set_state(true);
+                call.perform();
 
     off_mode:
-      - switch.turn_off: compressor_power
+      - switch.turn_off: compressor_power  # This will be blocked by switch protection if needed
       - switch.turn_off: compressor_speed_high
-      - lambda: |-
-          id(blower_pwm_filter).set_min_power(0.15);
-          id(target_blower_speed) = 1;        // Ramp down to minimum speed
-          id(ramp_blower) = true;
-      - delay: 20s # Push remaining residual air from evaporator. Increase 10s if you have long ducts.
-      - fan.turn_off: blower_fan
+      - if:
+          condition:
+            lambda: |-
+              // Check if compressor actually turned off
+              return !id(compressor_power).state;
+          then:
+            # Compressor is OFF - proceed with normal off sequence
+            - lambda: |-
+                // Record compressor off time and clear short cycle protection
+                id(compressor_last_off_time) = millis();
+                id(compressor_protection_active) = false;
+                id(compressor_short_cycle_protection) = false;
+                
+                // Use comfort minimum for evaporator purge
+                id(blower_pwm_filter).set_min_power(0.20);
+                id(target_blower_speed) = 20;  // 20% for evaporator purge
+                id(ramp_blower) = true;
+                ESP_LOGI("Protection", "Off mode: 20%% for evaporator purge");
+            - delay: 20s # Push remaining residual air from evaporator
+            - lambda: |-
+                // Complete shutdown after purge
+                id(ramp_blower) = false;
+                id(target_blower_speed) = 0;
+                id(current_blower_speed) = 0;
+                id(blower_pwm_filter).set_min_power(0.00);
+                ESP_LOGI("Protection", "System completely shut down");
+            - fan.turn_off: blower_fan
+            - lambda: |-
+                id(blower_power).unrequest_high_power();
+          else:
+            # Compressor is STILL ON due to protection - maintain cooling operation
+            - lambda: |-
+                ESP_LOGW("Protection", "CRITICAL: Compressor protected - maintaining cooling airflow for evaporator safety!");
+                id(pending_off_request) = true;
+                
+                // Keep full cooling airflow to prevent evaporator freeze
+                float min_power = id(cooling_min_power).state / 100.0;
+                min_power = fmax(min_power, 0.30); // Ensure minimum 30% for evaporator protection
+                id(blower_pwm_filter).set_min_power(min_power);
+                
+                // Keep fan running for evaporator protection
+                auto call = id(blower_fan).make_call();
+                call.set_state(true);
+                call.perform();
 
     on_boot_restore_from: memory
     default_preset: Standby # If no memory, default to Standby.
@@ -510,71 +750,183 @@ climate:
           id(previous_error) = 0.0;
           ESP_LOGI("Climate", "Fan Mode: AUTO");
       - script.execute: climate_fan_auto_pid
+      # ADDITIONAL FIX: Ensure PID runs immediately when switching to AUTO in cooling mode
+      - if:
+          condition:
+            lambda: |-
+              return id(undermount_thermostat).action == CLIMATE_ACTION_COOLING;
+          then:
+            - delay: 1s
+            - script.execute: climate_fan_auto_pid
+
+    fan_mode_off_action:
+      # Complete shutdown sequence
+      - lambda: |-
+          // Stop the ramp immediately
+          id(ramp_blower) = false;
+          id(target_blower_speed) = 0;
+          id(current_blower_speed) = 0;
+      # Turn off blower
+      - fan.turn_off: blower_fan
+      # Turn off power supply
+      - lambda: |-
+          id(blower_power).unrequest_high_power();
+      # Reset PWM clamp to allow true 0
+      - lambda: |-
+          id(blower_pwm_filter).set_min_power(0.0);
 
     on_state:
-      - script.execute: climate_fan_auto_pid
       - script.execute: status_light_update
       - script.execute: update_compressor_control
 
 # Scripts
 ################################################################################
 script:
-  # Calculates PID output
   - id: climate_fan_auto_pid
+    mode: queued
     then:
       - lambda: |-
-          if ((id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) && (id(undermount_thermostat).mode != CLIMATE_MODE_OFF)) {
-            // Time Management
-            uint32_t now = millis();
-            float dt = (id(last_time) == 0) ? 1.0 : (now - id(last_time)) / 1000.0;
-            id(last_time) = now;
+          // Enhanced debug logging with proper fan mode detection
+          ESP_LOGI("PID", "=== PID SCRIPT CALLED ===");
+          
+          // Get current fan mode properly
+          auto fan_mode = id(undermount_thermostat).fan_mode;
+          const char* fan_mode_str = "UNKNOWN";
+          if (fan_mode == CLIMATE_FAN_AUTO) fan_mode_str = "AUTO";
+          else if (fan_mode == CLIMATE_FAN_LOW) fan_mode_str = "LOW"; 
+          else if (fan_mode == CLIMATE_FAN_MEDIUM) fan_mode_str = "MEDIUM";
+          else if (fan_mode == CLIMATE_FAN_HIGH) fan_mode_str = "HIGH";
+          else if (fan_mode == CLIMATE_FAN_OFF) fan_mode_str = "OFF";
+          
+          ESP_LOGI("PID", "Mode: %d (COOL), Fan Mode: %d (%s), Action: %d (COOLING)", 
+                   id(undermount_thermostat).mode,
+                   fan_mode,
+                   fan_mode_str,
+                   id(undermount_thermostat).action);
+          
+          ESP_LOGI("PID", "Current Temp: %.2f°C, Target: %.2f°C", 
+                   id(undermount_thermostat).current_temperature,
+                   id(undermount_thermostat).target_temperature);
+          ESP_LOGI("PID", "Fan State: %s, Compressor: %s",
+                   id(blower_fan).state ? "ON" : "OFF",
+                   id(compressor_power).state ? "ON" : "OFF");
+          
+          const bool pid_allowed =
+              (fan_mode == CLIMATE_FAN_AUTO) &&
+              (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING ||
+               id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY);
 
-            // Get min and max blower pwm power thresholds
-            float min_output = id(blower_pwm_filter).get_min_power();
-            float max_output = id(blower_pwm_filter).get_max_power();
-
-            // Initalize fan_speed
-            int fan_speed;
-
-            // PID Constants
-            const float Kp = ${kp};
-            const float Ki = ${ki};
-            const float Kd = ${kd};
-
-            // Temperature Error Calculation
-            float current_temp = id(undermount_thermostat).current_temperature;
-            float target_temp = id(undermount_thermostat).target_temperature;
-            float error = current_temp - target_temp;
-
-            // Proportional
-            float P = Kp * error;
-
-            // Integral
-            id(integral) += error * dt;
-            float integral_limit = fabs(${integral_clamp_factor} * P / Ki); // Clamp based on Proportional
-            id(integral) = fmax(-integral_limit, fmin(id(integral), integral_limit));
-            float I = Ki * id(integral);
-
-            // Derivative
-            float derivative = (error - id(previous_error)) / dt;
-            float D = Kd * derivative;
-            id(previous_error) = error;
-
-            // PID output clamped between 0 and 1
-            float output = fmax(0.0, fmin(1.0, P + I + D));
-
-            // Map output to fan speed (0 to 100)
-
-            fan_speed = static_cast<int>(output * 100);
-            fan_speed = fmax(1, fmin(100, fan_speed));
-
-            // Logging
-            ESP_LOGI("PID Control", "Error: %.2f, P: %.2f, I: %.2f, D: %.2f, Output: %.2f, Fan Speed: %d", error, P, I, D, output, fan_speed);
-
-            // Set blower speed using blower ramp
-            id(target_blower_speed) = fan_speed;
-            id(ramp_blower) = true;
+          ESP_LOGI("PID", "PID Allowed: %s (fan_mode==AUTO: %s, cooling_or_fan: %s)", 
+                   pid_allowed ? "YES" : "NO",
+                   (fan_mode == CLIMATE_FAN_AUTO) ? "YES" : "NO",
+                   (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING || 
+                    id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY) ? "YES" : "NO");
+          
+          //------------------------------------------------------
+          // EARLY EXIT if system is OFF or PID not allowed
+          //------------------------------------------------------
+          if (id(undermount_thermostat).mode == CLIMATE_MODE_OFF) {
+            ESP_LOGD("PID", "System is OFF - PID script should not run");
+            return;
           }
+          
+          if (!pid_allowed) {
+            ESP_LOGI("PID", "PID not allowed - setting target to 0");
+            id(target_blower_speed) = 0;
+            id(ramp_blower) = true;
+            return;
+          }
+
+          //------------------------------------------------------
+          // RUN THE PID ONLY WHEN ALLOWED
+          //------------------------------------------------------
+          ESP_LOGI("PID", "PID is allowed - running PID control");
+
+          // --- Special handling for FAN_ONLY mode ---
+          if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY) {
+            const float current = id(undermount_thermostat).current_temperature;
+            const float target  = id(undermount_thermostat).target_temperature;
+            const float error   = current - target;
+            
+            // Fan-only minimum speed for comfort (no compressor protection needed)
+            if (fabs(error) <= 0.5) {
+              ESP_LOGI("PID", "Fan-only circulation - error %.2f°C, setting 25%% speed", error);
+              id(target_blower_speed) = 25;
+              id(ramp_blower) = true;
+              return;
+            }
+          }
+
+          // --- Time base ---------------------------------------------------
+          const uint32_t now = millis();
+          const float dt = (id(last_time) == 0) ? 1.0f
+                                                : (now - id(last_time)) / 1000.0f;
+          id(last_time) = now;
+
+          // --- PID constants ----------------------------------------------
+          const float Kp = ${kp};
+          const float Ki = ${ki};
+          const float Kd = ${kd};
+
+          // --- Error term --------------------------------------------------
+          const float current = id(undermount_thermostat).current_temperature;
+          const float target  = id(undermount_thermostat).target_temperature;
+          const float error   = current - target;
+
+          ESP_LOGI("PID", "Raw error: %.3f°C (current: %.2f, target: %.2f)", error, current, target);
+
+          // --- Proportional -----------------------------------------------
+          const float P = Kp * error;
+
+          // --- Integral w/ anti-windup ------------------------------------
+          id(integral) += error * dt;
+          const float int_lim = fabsf(${integral_clamp_factor} * P / Ki);
+          id(integral) = fmaxf(-int_lim, fminf(id(integral), int_lim));
+          const float I = Ki * id(integral);
+
+          // --- Derivative --------------------------------------------------
+          const float D = Kd * ((error - id(previous_error)) / dt);
+          id(previous_error) = error;
+
+          // --- PID output (0-1) BEFORE minimums -------------------------------------------
+          float raw_output = P + I + D;
+          float clamped_output = fmaxf(0.0f, fminf(1.0f, raw_output));
+
+          ESP_LOGI("PID", "Raw PID: P=%.3f I=%.3f D=%.3f raw_out=%.3f clamped=%.3f", 
+                   P, I, D, raw_output, clamped_output);
+
+          // --- Apply mode-specific minimums ---
+          float final_output = clamped_output;
+          
+          if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY) {
+            // Fan-only: NO artificial minimum - let PID control naturally
+            ESP_LOGI("PID", "Fan-only mode: no minimum applied, using raw PID output");
+          } else if (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING && 
+                     id(compressor_power).state) {
+            // Cooling with compressor: evaporator protection
+            float cooling_min = id(cooling_min_power).state / 100.0;
+            
+            // Higher minimum for high-speed compressor
+            if (id(compressor_speed_high).state) {
+              cooling_min = fmax(cooling_min, 0.70);
+              ESP_LOGI("PID", "High-speed compressor active - minimum: %.0f%%", cooling_min * 100);
+            }
+            
+            final_output = fmaxf(cooling_min, clamped_output);
+            ESP_LOGI("PID", "Cooling mode: applied %.0f%% minimum (was %.1f%%, now %.1f%%)", 
+                     cooling_min * 100, clamped_output * 100, final_output * 100);
+          }
+
+          // --- Map to 0-100 % blower speed --------------------------------
+          int fan_speed = lroundf(final_output * 100.0f);
+          fan_speed = fmax(0, fmin(100, fan_speed));
+
+          ESP_LOGI("PID", "FINAL: err=%.3f P=%.3f I=%.3f D=%.3f raw=%.3f final=%.3f fan=%d%%",
+                   error, P, I, D, clamped_output, final_output, fan_speed);
+
+          // --- Hand off to the ramp controller ----------------------------
+          id(target_blower_speed) = fan_speed;
+          id(ramp_blower) = true;
 
   # Start/Stop Compressor based on blower speed threshold
   - id: update_compressor_control
@@ -587,7 +939,7 @@ script:
               const uint32_t time_threshold = 120000;          // SYSTEM PROTECTION - Delay speed change timer (2 minutes)
               uint32_t now = millis();
 
-              // High-speed Compressor Start
+              // High-speed Compressor Start (with enhanced protection)
               if (id(blower_speed_called).state >= high_speed_start_threshold && 
                   id(enable_high_speed).state) {
                   
@@ -596,9 +948,18 @@ script:
                       if (elapsed_time >= time_threshold) {
                           id(high_speed_active) = true;
                           id(compressor_speed_high).turn_on();
-                          ESP_LOGI("Compressor", "High-speed turned ON");
+                          
+                          // Immediately enforce 70% minimum for high-speed
+                          float current_min = id(blower_pwm_filter).get_min_power();
+                          if (current_min < 0.70) {
+                            id(blower_pwm_filter).set_min_power(0.70);
+                            ESP_LOGW("Protection", "High-speed activated: enforcing 70%% minimum");
+                          }
+                          
+                          ESP_LOGI("Compressor", "High-speed turned ON with protection");
                       } else {
-                          ESP_LOGD("Compressor", "High-speed ON requested, waiting for timer: %.0f s remaining", (time_threshold - elapsed_time));
+                          ESP_LOGD("Compressor", "High-speed protection: %.1f s remaining", 
+                                   (time_threshold - elapsed_time) / 1000.0);
                       }
                   }
               } else if (!id(high_speed_active)) {
@@ -612,9 +973,15 @@ script:
                       if (elapsed_time >= time_threshold) {
                           id(high_speed_active) = false;
                           id(compressor_speed_high).turn_off();
-                          ESP_LOGI("Compressor", "High-speed turned OFF");
+                          
+                          // Restore normal cooling minimum
+                          float cooling_min = id(cooling_min_power).state / 100.0;
+                          id(blower_pwm_filter).set_min_power(cooling_min);
+                          
+                          ESP_LOGI("Compressor", "High-speed turned OFF, restored normal minimum");
                       } else {
-                          ESP_LOGD("Compressor", "High-speed OFF requested, waiting for timer: %.0f s remaining", (time_threshold - elapsed_time));
+                          ESP_LOGD("Compressor", "High-speed stop protection: %.1f s remaining", 
+                                   (time_threshold - elapsed_time) / 1000.0);
                       }
                   }
               } else if (id(high_speed_active)) {
@@ -684,6 +1051,63 @@ script:
                 brightness: 40%
                 effect: "Pulse"
 
+  # Handle delayed shutdown when short cycle protection expires
+  - id: delayed_shutdown_off
+    then:
+      - lambda: |-
+          ESP_LOGI("Protection", "Executing delayed off shutdown after compressor protection expired");
+          id(compressor_protection_active) = false;
+          id(pending_off_request) = false;
+          id(blower_pwm_filter).set_min_power(0.20);
+          id(target_blower_speed) = 20;  // 20% for evaporator purge
+          id(ramp_blower) = true;
+          ESP_LOGI("Protection", "Delayed off mode: 20%% for evaporator purge");
+      - delay: 20s # Push remaining residual air from evaporator
+      - lambda: |-
+          // Complete shutdown after purge
+          id(ramp_blower) = false;
+          id(target_blower_speed) = 0;
+          id(current_blower_speed) = 0;
+          id(blower_pwm_filter).set_min_power(0.00);
+          ESP_LOGI("Protection", "Delayed system shutdown complete");
+      - fan.turn_off: blower_fan
+      - lambda: |-
+          id(blower_power).unrequest_high_power();
+
+  - id: delayed_shutdown_idle
+    then:
+      - lambda: |-
+          ESP_LOGI("Protection", "Executing delayed idle shutdown after compressor protection expired");
+          id(pending_idle_request) = false;
+          id(blower_pwm_filter).set_min_power(0.20);
+          id(target_blower_speed) = 20;  // 20% for residual circulation
+          id(ramp_blower) = true;
+          ESP_LOGI("Protection", "Delayed idle mode: 20%% for residual circulation");
+      - delay: 20s # Push remaining residual air from evaporator
+      - fan.turn_off: blower_fan
+
+  # Force fan-only mode to start immediately
+  - id: force_fan_only_start
+    then:
+      - delay: 100ms  # Brief delay to let thermostat settle
+      - lambda: |-
+          // Force fan to start if it's not already running and we're in fan-only mode
+          if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY && !id(blower_fan).state) {
+            ESP_LOGW("FanOnly", "Forcing fan start - thermostat timers may have blocked it");
+            
+            // Reset minimum for fan-only
+            id(blower_pwm_filter).set_min_power(0.20);
+            
+            // Force fan on and set initial speed
+            auto call = id(blower_fan).make_call();
+            call.set_state(true);
+            call.set_speed(0.25);  // 25% initial speed
+            call.perform();
+            
+            // Trigger PID control
+            id(climate_fan_auto_pid).execute();
+          }
+
 interval:
   - interval: 200ms
     id: blower_ramp_control # Ramps blower up/down smoothly over a set time
@@ -707,22 +1131,136 @@ interval:
             // Calculate the next speed, including the step
             float next_speed = id(current_blower_speed) + step;
 
-            // Clamp the speed within boundaries (min: 1, max: 100)
-            next_speed = fmax(1, fmin(next_speed, 100));
+            // Allow speed to go to 0, don't clamp to minimum of 1
+            next_speed = fmax(0, fmin(next_speed, 100));
 
             if (fabs(diff) < fabs(step)) {
-                id(current_blower_speed) = (next_speed <= 1) ? 1 : next_speed;
+                id(current_blower_speed) = id(target_blower_speed); // Use exact target
                 id(ramp_blower) = false;
 
-                // Set the actual desired speed
-                auto final_call = id(blower_fan).make_call();
-                final_call.set_speed(id(current_blower_speed));
-                final_call.perform();
+                // Check if target is 0 and turn fan completely off
+                if (id(target_blower_speed) <= 0) {
+                    auto off_call = id(blower_fan).make_call();
+                    off_call.set_state(false);
+                    off_call.perform();
+                    id(blower_power).unrequest_high_power(); // Turn off power supply
+                } else {
+                    auto final_call = id(blower_fan).make_call();
+                    final_call.set_speed(id(current_blower_speed));
+                    final_call.perform();
+                }
             } else {
                 // Update the current blower speed smoothly
                 id(current_blower_speed) = next_speed;
-                auto call = id(blower_fan).make_call();
-                call.set_speed(id(current_blower_speed));
-                call.perform();
+                
+                // If ramping to 0, turn off completely when we get there
+                if (next_speed <= 0) {
+                    auto off_call = id(blower_fan).make_call();
+                    off_call.set_state(false);
+                    off_call.perform();
+                    id(blower_power).unrequest_high_power();
+                    id(ramp_blower) = false;
+                } else {
+                    auto call = id(blower_fan).make_call();
+                    call.set_speed(id(current_blower_speed));
+                    call.perform();
+                }
             }
+          }
+
+  - interval: 5s
+    id: compressor_protection_check
+    then:
+      - lambda: |-
+          // Check if short cycle protection timer has expired
+          if (id(compressor_short_cycle_protection)) {
+            uint32_t time_since_start = millis() - id(compressor_start_time);
+            if (time_since_start >= 120000) { // 2 minutes
+              id(compressor_short_cycle_protection) = false;
+              ESP_LOGI("Protection", "Short cycle protection expired - processing pending requests");
+              
+              // Execute any pending shutdown requests with proper purge
+              if (id(pending_off_request)) {
+                id(pending_off_request) = false;
+                ESP_LOGI("Protection", "Executing delayed off action with purge");
+                id(delayed_shutdown_off).execute();
+              } else if (id(pending_idle_request)) {
+                id(pending_idle_request) = false;
+                ESP_LOGI("Protection", "Executing delayed idle action with purge");
+                id(delayed_shutdown_idle).execute();
+              }
+            }
+          }
+
+  # CRITICAL FIX: Add PID trigger interval for cooling mode
+  - interval: 2s  # More frequent than fan-only for better cooling responsiveness
+    id: cooling_pid_trigger
+    then:
+      - lambda: |-
+          // Run PID more frequently when actively cooling
+          if (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING && 
+              id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) {
+            ESP_LOGD("PID_Trigger", "Triggering PID control for cooling mode");
+            id(climate_fan_auto_pid).execute();
+          }
+
+  # Add debugging interval to track unexpected fan activity
+  - interval: 10s
+    id: fan_debug_check
+    then:
+      - lambda: |-
+          // Check for dangerous condition: compressor on but fan off
+          if (id(compressor_power).state && !id(blower_fan).state) {
+            ESP_LOGW("SAFETY", "DANGER: Compressor running without blower! Forcing blower on!");
+            
+            // Emergency blower restart
+            float min_power = id(cooling_min_power).state / 100.0;
+            min_power = fmax(min_power, 0.30); // Minimum 30% for evaporator protection
+            id(blower_pwm_filter).set_min_power(min_power);
+            id(target_blower_speed) = min_power * 100;
+            id(ramp_blower) = true;
+            
+            auto call = id(blower_fan).make_call();
+            call.set_state(true);
+            call.perform();
+          }
+          
+          // FIXED: Only force shutdown if compressor is OFF, system is truly off, AND not in fan-only mode
+          if (id(blower_fan).state && 
+              id(undermount_thermostat).mode == CLIMATE_MODE_OFF && 
+              !id(compressor_power).state &&  // Compressor must be off
+              !id(compressor_short_cycle_protection)) { // No active protection
+            
+            ESP_LOGW("DEBUG", "FAN UNEXPECTEDLY ON! Mode: OFF, Fan: %s, Ramp: %s, Target: %.1f, Current: %.1f", 
+                     id(blower_fan).state ? "ON" : "OFF",
+                     id(ramp_blower) ? "TRUE" : "FALSE",
+                     id(target_blower_speed),
+                     id(current_blower_speed));
+            ESP_LOGW("DEBUG", "Compressor: %s, Protection: %s, Pending Off: %s",
+                     id(compressor_power).state ? "ON" : "OFF",
+                     id(compressor_short_cycle_protection) ? "ACTIVE" : "INACTIVE",
+                     id(pending_off_request) ? "TRUE" : "FALSE");
+                     
+            // Only force shutdown when it's truly safe to do so
+            ESP_LOGW("DEBUG", "Forcing fan shutdown - should not be running in off mode");
+            id(ramp_blower) = false;
+            id(target_blower_speed) = 0;
+            id(current_blower_speed) = 0;
+            id(blower_pwm_filter).set_min_power(0.00);
+            auto call = id(blower_fan).make_call();
+            call.set_state(false);
+            call.perform();
+            id(blower_power).unrequest_high_power();
+          }
+
+  # Periodic PID execution for fan-only mode
+  - interval: 5s
+    id: fan_only_pid_trigger
+    then:
+      - lambda: |-
+          // Only run PID in fan-only mode with auto fan setting
+          if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY && 
+              id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) {
+            ESP_LOGD("PID_Trigger", "Triggering PID control for fan-only mode");
+            id(climate_fan_auto_pid).execute();
           }
