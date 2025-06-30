@@ -8,9 +8,7 @@
 # - Implemented diagnostic monitoring and emergency handling
 # - Testing and validation on v2 hardware
 #
-# - Auto Mode High Speed Compressor Functionality remains untested
-#
-# To be used with Undermount AC ESP Home Thermostat and  v2 System
+# To be used with Undermount AC v2 ESP Home Thermostat and System
 
 # V2 Connector Matrix:
 # Output 1 - Blower Speed (Red Wire)
@@ -279,6 +277,28 @@ sensor:
       }
       return 0.0;
 
+  - platform: template
+    id: pid_target_speed
+    name: "PID Target Speed"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    icon: "mdi:target"
+    disabled_by_default: true
+    lambda: |-
+      return id(target_blower_speed);
+
+  - platform: template
+    id: pid_current_speed
+    name: "PID Current Speed"  
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    icon: "mdi:speedometer"
+    disabled_by_default: true
+    lambda: |-
+      return id(current_blower_speed);
+
   # Uncomment sensors below for Wi-Fi Diagnostics
   #- platform: wifi_signal
   #  name: "WiFi Signal dB"
@@ -393,6 +413,9 @@ output:
               return;
           }
 
+          // Convert state (0-1.0) to percentage for logging
+          float input_percentage = state * 100.0;
+
           // Rest of the existing logic for non-zero speeds
           const float duty_cycles[24] = {
               0.00, 0.20, 0.20, 0.20,
@@ -412,8 +435,11 @@ output:
 
           if (fabs(id(blower_fan).speed - duty_cycle) > hysteresis_threshold) {
               id(blower_pwm).set_level(duty_cycle);
-              ESP_LOGD("Blower PWM Filter", "State: %.2f, Speed Index: %d, Duty Cycle: %.2f", state, speed_index, duty_cycle);
-              id(blower_speed_called).publish_state(duty_cycle * 100);
+              ESP_LOGD("Blower PWM Filter", "Input: %.1f%%, Speed Index: %d, Duty Cycle: %.2f (%.0f%%)", 
+                       input_percentage, speed_index, duty_cycle, duty_cycle * 100);
+              
+              // CRITICAL FIX: Report the actual input percentage, not the duty cycle
+              id(blower_speed_called).publish_state(input_percentage);
           }
 
   - platform: ledc # Output 1
@@ -443,24 +469,34 @@ number:
     id: cooling_min_power
     name: "Minimum Cooling Blower Speed"
     optimistic: true
-    min_value: 20            # TEMPORARILY REDUCED from 40% to see PID action
-    max_value: 60
+    min_value: 40            # SYSTEM PROTECTION: >=40% to prevent frozen evaporator
+    max_value: 60            # Maximum reasonable minimum
     step: 1
     unit_of_measurement: "%"
     icon: "mdi:fan"
     entity_category: "config"
     restore_value: true
-    initial_value: 30        # TEMPORARILY REDUCED from 40% to 30%
+    initial_value: 40        # RESTORED to safe 40% default
 
-    # Enhanced protection logic
+    # Enhanced protection logic with validation
     on_value:
       then:
         - lambda: |-
+            // Validate the value is within safe limits
+            float new_value = id(cooling_min_power).state;
+            if (new_value < 40.0) {
+              ESP_LOGW("Protection", "Minimum cooling speed %.0f%% is below safe limit! Forcing to 40%%", new_value);
+              auto call = id(cooling_min_power).make_call();
+              call.set_value(40.0);
+              call.perform();
+              return;
+            }
+            
             // Only apply cooling minimums when compressor is actually running
             if (id(compressor_power).state && 
                 id(undermount_thermostat).action == CLIMATE_ACTION_COOLING) {
               
-              float min_power = id(cooling_min_power).state / 100.0;
+              float min_power = new_value / 100.0;
               
               // Apply higher minimum if high-speed compressor is active
               if (id(compressor_speed_high).state) {
@@ -469,7 +505,7 @@ number:
               }
               
               id(blower_pwm_filter)->set_min_power(min_power);
-              ESP_LOGD("Cooling Min Power", "Updated min power to: %.2f", min_power);
+              ESP_LOGI("Protection", "Updated cooling minimum to: %.0f%%", new_value);
             }
 
 button:
@@ -483,6 +519,16 @@ button:
                    id(undermount_thermostat).fan_mode,
                    id(undermount_thermostat).action);
       - script.execute: climate_fan_auto_pid
+
+  - platform: template
+    name: "Reset Cooling Minimum to Safe Default"
+    entity_category: "config"
+    on_press:
+      - lambda: |-
+          ESP_LOGW("Safety", "Resetting minimum cooling speed to safe default (40%%)");
+          auto call = id(cooling_min_power).make_call();
+          call.set_value(40.0);
+          call.perform();
 
 switch:  
   - platform: gpio # Output 3
@@ -611,8 +657,8 @@ climate:
           // Apply strict cooling minimums when compressor is running
           float min_power = id(cooling_min_power).state / 100.0;
           
-          // Ensure absolute minimum of 30% for evaporator protection (reduced for testing)
-          min_power = fmax(min_power, 0.30);
+          // CRITICAL: Ensure absolute minimum of 40% for evaporator protection
+          min_power = fmax(min_power, 0.40);
           
           id(blower_pwm_filter).set_min_power(min_power);
           ESP_LOGI("Protection", "Cooling mode: %.0f%% minimum for evaporator protection", 
@@ -646,7 +692,7 @@ climate:
                 
                 // Keep full cooling airflow to prevent evaporator freeze
                 float min_power = id(cooling_min_power).state / 100.0;
-                min_power = fmax(min_power, 0.30); // Ensure minimum 30% for evaporator protection
+                min_power = fmax(min_power, 0.40); // Ensure minimum 40% for evaporator protection
                 id(blower_pwm_filter).set_min_power(min_power);
                 
                 // Keep fan running for evaporator protection
@@ -694,7 +740,7 @@ climate:
                 
                 // Keep full cooling airflow to prevent evaporator freeze
                 float min_power = id(cooling_min_power).state / 100.0;
-                min_power = fmax(min_power, 0.30); // Ensure minimum 30% for evaporator protection
+                min_power = fmax(min_power, 0.40); // Ensure minimum 40% for evaporator protection
                 id(blower_pwm_filter).set_min_power(min_power);
                 
                 // Keep fan running for evaporator protection
@@ -895,7 +941,7 @@ script:
           ESP_LOGI("PID", "Raw PID: P=%.3f I=%.3f D=%.3f raw_out=%.3f clamped=%.3f", 
                    P, I, D, raw_output, clamped_output);
 
-          // --- Apply mode-specific minimums ---
+          // --- Apply mode-specific minimums with validation ---
           float final_output = clamped_output;
           
           if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY) {
@@ -905,6 +951,9 @@ script:
                      id(compressor_power).state) {
             // Cooling with compressor: evaporator protection
             float cooling_min = id(cooling_min_power).state / 100.0;
+            
+            // CRITICAL SAFETY: Never allow minimum below 40%
+            cooling_min = fmax(cooling_min, 0.40);
             
             // Higher minimum for high-speed compressor
             if (id(compressor_speed_high).state) {
@@ -1144,10 +1193,13 @@ interval:
                     off_call.set_state(false);
                     off_call.perform();
                     id(blower_power).unrequest_high_power(); // Turn off power supply
+                    ESP_LOGD("Ramp", "Target reached: OFF");
                 } else {
                     auto final_call = id(blower_fan).make_call();
-                    final_call.set_speed(id(current_blower_speed));
+                    final_call.set_speed(id(current_blower_speed) / 100.0); // Convert to 0-1.0
                     final_call.perform();
+                    ESP_LOGD("Ramp", "Target reached: %.1f%% (fan speed: %.3f)", 
+                             id(current_blower_speed), id(current_blower_speed) / 100.0);
                 }
             } else {
                 // Update the current blower speed smoothly
@@ -1160,12 +1212,19 @@ interval:
                     off_call.perform();
                     id(blower_power).unrequest_high_power();
                     id(ramp_blower) = false;
+                    ESP_LOGD("Ramp", "Ramped to OFF");
                 } else {
                     auto call = id(blower_fan).make_call();
-                    call.set_speed(id(current_blower_speed));
+                    call.set_speed(next_speed / 100.0); // Convert to 0-1.0
                     call.perform();
+                    ESP_LOGD("Ramp", "Ramping: target=%.1f%%, current=%.1f%%, fan_speed=%.3f", 
+                             id(target_blower_speed), id(current_blower_speed), next_speed / 100.0);
                 }
             }
+            
+            // Update the diagnostic sensors
+            id(pid_target_speed).publish_state(id(target_blower_speed));
+            id(pid_current_speed).publish_state(id(current_blower_speed));
           }
 
   - interval: 5s
@@ -1215,7 +1274,7 @@ interval:
             
             // Emergency blower restart
             float min_power = id(cooling_min_power).state / 100.0;
-            min_power = fmax(min_power, 0.30); // Minimum 30% for evaporator protection
+            min_power = fmax(min_power, 0.40); // Minimum 40% for evaporator protection
             id(blower_pwm_filter).set_min_power(min_power);
             id(target_blower_speed) = min_power * 100;
             id(ramp_blower) = true;
