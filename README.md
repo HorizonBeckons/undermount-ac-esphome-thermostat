@@ -8,7 +8,7 @@ The software is provided "as is," without warranty of any kind, express or impli
 
 ## Problem Statement
 
-The primary issue addressed was documented in **GitHub Issue #18**, where the V3 code would not allow V2 systems to properly disable the fan. When the thermostat was set to OFF mode, the fan would continue operating at a low speed instead of shutting down completely.
+The primary issue addressed was documented in **GitHub Issue #18** https://github.com/anthonysecco/undermount-ac-esphome-thermostat/issues/18, where the V3 code would not allow V2 systems to properly disable the fan. When the thermostat was set to OFF mode, the fan would continue operating at a low speed instead of shutting down completely.
 
 ## Hardware Differences: V2 vs V3
 
