@@ -63,7 +63,7 @@ This is an enhanced version of the [original Undermount AC controller](https://g
 - **Climate timing adjustments:** Reduced minimum times for better fan-only responsiveness
 
 ## Installation
-1. Flash this YAML to your ESP32-S3 controller
+1. Flash this YAML to your Undermount AC ESPHome HVAC ESP32-S3 controller
 2. Configure WiFi credentials in the `wifi:` section
 3. Set your minimum cooling blower speed in Home Assistant
 4. Enabling high-speed compressor allows for the auto functionality, it does not trigger high-speed.
