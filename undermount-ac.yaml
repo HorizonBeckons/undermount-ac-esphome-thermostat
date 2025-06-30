@@ -7,6 +7,7 @@
 # - Enhanced PID control with safety features
 # - Implemented diagnostic monitoring and emergency handling
 # - Testing and validation on v2 hardware
+# - Optimized PID triggers and performance
 #
 # To be used with Undermount AC v2 ESP Home Thermostat and System
 
@@ -145,7 +146,8 @@ captive_portal:
 # Core Services
 ################################################################################
 logger:
-  level: VERY_VERBOSE
+  level: DEBUG  # Optimized from VERY_VERBOSE for better performance
+
 api:
 
 ota:
@@ -548,9 +550,7 @@ switch:
           if (protection_active) {
             ESP_LOGW("Protection", "Compressor turn-off blocked by short cycle protection: %.1f seconds remaining", 
                      (120000 - time_since_start) / 1000.0);
-            // Immediately turn it back on
-            id(compressor_power).turn_on();
-            return;
+            return;  // Block the shutdown without forcing back on
           }
           
           // Protection not active, allow normal shutdown
@@ -795,15 +795,7 @@ climate:
           id(integral) = 0.0;
           id(previous_error) = 0.0;
           ESP_LOGI("Climate", "Fan Mode: AUTO");
-      - script.execute: climate_fan_auto_pid
-      # ADDITIONAL FIX: Ensure PID runs immediately when switching to AUTO in cooling mode
-      - if:
-          condition:
-            lambda: |-
-              return id(undermount_thermostat).action == CLIMATE_ACTION_COOLING;
-          then:
-            - delay: 1s
-            - script.execute: climate_fan_auto_pid
+      # OPTIMIZED: Removed redundant PID calls - unified trigger handles this
 
     fan_mode_off_action:
       # Complete shutdown sequence
@@ -1157,6 +1149,8 @@ script:
             id(climate_fan_auto_pid).execute();
           }
 
+# Intervals - OPTIMIZED
+################################################################################
 interval:
   - interval: 200ms
     id: blower_ramp_control # Ramps blower up/down smoothly over a set time
@@ -1227,11 +1221,34 @@ interval:
             id(pid_current_speed).publish_state(id(current_blower_speed));
           }
 
-  - interval: 5s
-    id: compressor_protection_check
+  # UNIFIED PID TRIGGER - OPTIMIZED: Replaces multiple separate PID intervals
+  - interval: 3s  # Balanced frequency for both cooling and fan-only modes
+    id: unified_pid_trigger
     then:
       - lambda: |-
-          // Check if short cycle protection timer has expired
+          // Only run PID in AUTO mode
+          if (id(undermount_thermostat).fan_mode != CLIMATE_FAN_AUTO) return;
+          
+          // Check if PID should run based on current state
+          bool should_run_pid = false;
+          
+          if (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING) {
+            should_run_pid = true;  // Active cooling needs PID
+          } else if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY) {
+            should_run_pid = true;  // Fan-only circulation needs PID  
+          }
+          
+          if (should_run_pid) {
+            ESP_LOGD("PID_Trigger", "Unified trigger executing PID control");
+            id(climate_fan_auto_pid).execute();
+          }
+
+  # UNIFIED SYSTEM MONITOR - OPTIMIZED: Combines protection check + safety monitoring
+  - interval: 5s
+    id: unified_system_monitor
+    then:
+      - lambda: |-
+          // 1. Compressor protection check
           if (id(compressor_short_cycle_protection)) {
             uint32_t time_since_start = millis() - id(compressor_start_time);
             if (time_since_start >= 120000) { // 2 minutes
@@ -1250,25 +1267,8 @@ interval:
               }
             }
           }
-
-  # CRITICAL FIX: Add PID trigger interval for cooling mode
-  - interval: 2s  # More frequent than fan-only for better cooling responsiveness
-    id: cooling_pid_trigger
-    then:
-      - lambda: |-
-          // Run PID more frequently when actively cooling
-          if (id(undermount_thermostat).action == CLIMATE_ACTION_COOLING && 
-              id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) {
-            ESP_LOGD("PID_Trigger", "Triggering PID control for cooling mode");
-            id(climate_fan_auto_pid).execute();
-          }
-
-  # Add debugging interval to track unexpected fan activity
-  - interval: 10s
-    id: fan_debug_check
-    then:
-      - lambda: |-
-          // Check for dangerous condition: compressor on but fan off
+          
+          // 2. Safety check - compressor without blower (CRITICAL)
           if (id(compressor_power).state && !id(blower_fan).state) {
             ESP_LOGW("SAFETY", "DANGER: Compressor running without blower! Forcing blower on!");
             
@@ -1284,7 +1284,7 @@ interval:
             call.perform();
           }
           
-          // FIXED: Only force shutdown if compressor is OFF, system is truly off, AND not in fan-only mode
+          // 3. Debug check - unexpected fan activity when system should be off
           if (id(blower_fan).state && 
               id(undermount_thermostat).mode == CLIMATE_MODE_OFF && 
               !id(compressor_power).state &&  // Compressor must be off
@@ -1310,16 +1310,4 @@ interval:
             call.set_state(false);
             call.perform();
             id(blower_power).unrequest_high_power();
-          }
-
-  # Periodic PID execution for fan-only mode
-  - interval: 5s
-    id: fan_only_pid_trigger
-    then:
-      - lambda: |-
-          // Only run PID in fan-only mode with auto fan setting
-          if (id(undermount_thermostat).mode == CLIMATE_MODE_FAN_ONLY && 
-              id(undermount_thermostat).fan_mode == CLIMATE_FAN_AUTO) {
-            ESP_LOGD("PID_Trigger", "Triggering PID control for fan-only mode");
-            id(climate_fan_auto_pid).execute();
           }
