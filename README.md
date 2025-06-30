@@ -1,4 +1,4 @@
-# Undermount AC v2 - Enhanced Controller
+# Undermount AC V2 System - Enhanced Controller
 
 ## Overview
 This is an enhanced version of the [original Undermount AC controller](https://github.com/anthonysecco/undermount-ac-esphome-thermostat), specifically adapted for **v2 hardware** with additional safety and control improvements.
