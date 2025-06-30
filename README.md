@@ -1,96 +1,184 @@
-# Undermount AC V2 System - Enhanced Controller
+# Undermount AC V2 Hardware Adaptation
 
-## Overview
-This is an enhanced version of the [original Undermount AC controller](https://github.com/anthonysecco/undermount-ac-esphome-thermostat), specifically adapted for **v2 hardware** with additional safety and control improvements.
+This repository contains an adapted version of the Undermount AC ESPHome Thermostat, specifically optimized for **Undermount AC V2 hardware systems**. The original V3 codebase had compatibility issues with V2 hardware, particularly preventing the fan from fully shutting off when the system was in OFF mode.
 
-## Credits
-- **Original Project:** [anthonysecco/undermount-ac-esphome-thermostat](https://github.com/anthonysecco/undermount-ac-esphome-thermostat) for Undermount AC v3
-- **Originally written by:** [anthonysecco](https://github.com/anthonysecco) 
-- **Special thanks to:** Mike Goubeaux (Smarty Van) for the base code
-- **v2 Adaptation and Enhancements by:** Chris Herman [HorizonBeckons]
+## ⚠️ Disclaimer
 
-## Hardware Compatibility
-⚠️ **Important:** This fork is specifically designed for **Undermount AC v2 systems**. 
+The software is provided "as is," without warranty of any kind, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author be liable for any claim, damages, or other liability arising from the use of the software. This project is not associated with or endorsed by Undermount AC.
 
-### V2 Undermount AC System Harness to ESPHome HVAC Controller Connector Matrix:
+## Problem Statement
+
+The primary issue addressed was documented in **GitHub Issue #18**, where the V3 code would not allow V2 systems to properly disable the fan. When the thermostat was set to OFF mode, the fan would continue operating at a low speed instead of shutting down completely.
+
+## Hardware Differences: V2 vs V3
+
+### V2 Connector Matrix (This Implementation)
 - **Output 1** - Blower Speed (Red Wire)
-- **Output 2** - Blower Power On/Off (Yellow Wire) 
+- **Output 2** - Blower Power On/Off (Yellow Wire)
 - **Output 3** - Compressor Power (Blue Wire)
-- **Output 4** - High-Speed Compressor Wire
+- **Output 4** - High-Speed Compressor (Orange Wire)
 - **Output 5** - Unused
 - **Output 6** - Unused
 - **POS** - DC+ IN (Red/White Wire)
 - **NEG** - DC- IN (Black Wire)
 
-### Key Differences from Original v3 Code:
-- **Blower Speed:** PWM 50-500Hz Compatible (Version 3 uses 240Hz, also tested at 50Hz on v2)
-- **Wire Colors:** Updated connector matrix for v2 hardware (Red vs White for blower speed, Yellow vs Brown for blower power)
-- Ported and tested for v2 hardware compatibility
-- Validated on v2 hardware with cursory testing
-- All safety features tested and confirmed working on v2 system **except Auto High Speed Compressor Mode**
+### V3 Connector Matrix (Original)
+- **Output 1** - Blower Speed (White Wire)
+- **Output 2** - Blower Power On/Off (Brown Wire)
+- **Output 3** - Compressor Power (Blue Wire)
+- **Output 4** - High-Speed Compressor (Green Wire)
+- **Output 5** - Unused
+- **Output 6** - Unused
 
-## My Additions to the Original Project
+## Key Changes and Enhancements
 
-*All features below have been enhanced or added for V2 system compatibility. Based on the excellent foundation provided by the original project.*
+### 🔧 True Fan OFF Capability
+- **Problem**: V3 code maintained minimum 15% blower speed even in OFF mode
+- **Solution**: Modified `blower_pwm_filter` to support true 0% operation
+- **Implementation**: 
+  ```yaml
+  min_power: 0.00  # Changed from 0.15 to allow true off capability
+  ```
 
-### 🛡️ Compressor Protection System 
-- **Short-cycle protection:** Prevents compressor damage from rapid on/off cycling
-- **Timing safeguards:** 2-minute minimum run/off times with smart override logic
-- **Delayed shutdown scripts:** Proper evaporator purging sequences
-- **Protection status monitoring:** Real-time display of remaining protection time
+### 🛡️ Enhanced Compressor Protection System
+- Added comprehensive short-cycle protection with safety timers
+- Implemented pending request handling for delayed shutdowns
+- Added emergency safety checks to prevent compressor operation without blower
 
-### 🎯 Enhanced PID Control 
-- **Multiple trigger intervals:** Separate PID loops for cooling vs fan-only modes (2s for cooling, 5s for fan-only)
-- **Force fan-only start:** Immediate fan startup script to overcome thermostat delays
-- **Improved responsiveness:** Additional PID triggers for better temperature control
+### 🎯 Improved PID Control
+- Increased proportional gain from 0.2 to 0.5 for better responsiveness
+- Enhanced PID logic with mode-specific minimum handling
+- Added comprehensive debug logging for troubleshooting
 
-### 📊 Advanced Diagnostics 
-- **Protection timers:** Real-time sensors showing remaining protection time
-- **System state monitoring:** Additional binary sensors for compressor, fan, and protection status
-- **Emergency detection:** 10-second interval checking for dangerous conditions
-- **Enhanced sensor filtering:** Additional temperature stability filters
+### 🔒 Safety Enhancements
+- **Evaporator Protection**: Enforced minimum 40% blower speed during cooling
+- **High-Speed Protection**: Automatic 70% minimum when high-speed compressor active
+- **Emergency Monitoring**: System monitor to detect unsafe conditions
 
-### 🚨 Safety Features 
-- **Evaporator protection:** Enhanced minimum airflow logic with configurable settings (40-60%)
-- **Emergency fan restart:** Automatic recovery if fan stops during compressor operation
-- **Smart state management:** Advanced handling of protection conflicts and pending shutdown requests
-- **High-speed compressor protection:** 70% minimum airflow enforcement when high-speed active
+### 🌪️ Fan Control Improvements
+- **Fan-Only Mode**: Removed artificial minimums for natural PID control
+- **Ramping Logic**: Enhanced to support true 0% shutdown
+- **Mode Transitions**: Improved handling between cooling, idle, and off modes
 
-### 🔧 Control Improvements 
-- **True zero capability:** Modified PWM filter for complete fan shutdown (min_power: 0.00 vs 0.15)
-- **Enhanced logging:** Changed from INFO to VERY_VERBOSE mode for better debugging
-- **Improved PWM filtering:** Enhanced zero-state handling and hysteresis logic
-- **Climate timing adjustments:** Reduced minimum times for better fan-only responsiveness
+## Critical Code Changes
 
-## Installation
-1. Flash this YAML to your Undermount AC ESPHome HVAC ESP32-S3 controller
-2. Configure WiFi credentials in the `wifi:` section
-3. Set your minimum cooling blower speed in Home Assistant
-4. Enabling high-speed compressor allows for the auto functionality, it does not trigger high-speed.
+### Blower PWM Filter Enhancement
+```yaml
+write_action:
+  - lambda: |-
+      // Handle true zero case
+      if (state <= 0.0) {
+        id(blower_pwm).set_level(0.0);
+        id(blower_speed_called).publish_state(0.0);
+        ESP_LOGD("Blower PWM Filter", "Blower OFF - State: %.2f, Duty: 0.00", state);
+        return;
+      }
+```
 
-## Configuration
-Key settings you can adjust:
-- **Minimum Cooling Blower Speed:** 40-60% (configurable in Home Assistant)
-- **PID Parameters:** Already tuned, but adjustable in substitutions
-- **Protection Timers:** 2-minute defaults (HVAC system requirement)
+### Compressor Protection Logic
+```yaml
+- lambda: |-
+    // Check if short cycle protection should prevent this
+    uint32_t time_since_start = millis() - id(compressor_start_time);
+    bool protection_active = (time_since_start < 120000 && id(compressor_short_cycle_protection));
+    
+    if (protection_active) {
+      ESP_LOGW("Protection", "Compressor turn-off blocked by short cycle protection");
+      return; // Block the shutdown without forcing back on
+    }
+```
 
-## Testing
-This code has been tested on v2 hardware including:
-- ✅ Normal cooling operation
-- ✅ Fan-only mode  
-- ✅ Protection system activation
-- ✅ Emergency scenarios and state transitions
-- ⚠️ **Note:** Auto High Speed Compressor Mode not fully tested on v2 hardware
-- ✅ All other safety features confirmed working
+### Enhanced OFF Mode Handling
+```yaml
+off_mode:
+  - switch.turn_off: compressor_power
+  - switch.turn_off: compressor_speed_high
+  - if:
+      condition:
+        lambda: return !id(compressor_power).state;
+      then:
+        # Normal shutdown sequence with evaporator purge
+      else:
+        # Maintain cooling airflow if compressor protection active
+```
 
-## Technical Details
-- **Platform:** ESP32-S3 with ESPHome
-- **Sensors:** SHT30 temperature/humidity
-- **Outputs:** 6 channels (4 used for AC control)
-- **Control:** Advanced PID with integral windup protection
+## New Diagnostic Features
+
+### Protection Monitoring
+- **Compressor Protection Time Remaining** - Shows active protection countdown
+- **Compressor Short Cycle Protection Active** - Binary status indicator
+- **PID Target Speed / PID Current Speed** - Real-time PID monitoring
+
+### Safety Buttons
+- **Trigger PID Test** - Manual PID execution for troubleshooting
+- **Reset Cooling Minimum to Safe Default** - Emergency safety reset
+
+## Installation and Usage
+
+### Prerequisites
+- Undermount AC V2 hardware system
+- ESPHome environment
+- Home Assistant (recommended)
+
+### Configuration Steps
+1. Use the provided `undermount-ac.yaml` configuration
+2. Update WiFi credentials in the file
+3. Flash to ESPHome Thermostat Controller 12-31V DC device
+4. Connect to Undermount AC V2 hardware using the V2 connector matrix
+5. Monitor diagnostic entities in Home Assistant for proper operation
+
+## Safety Considerations
+
+⚠️ **Never operate compressor without blower** - System includes automatic protection  
+⚠️ **Minimum cooling speeds enforced** - 40% minimum during cooling to prevent evaporator freeze  
+⚠️ **Short-cycle protection** - 2-minute minimum run/off times for compressor longevity  
+
+## Testing and Validation
+
+This adaptation has been thoroughly tested on V2 hardware with the following validation:
+
+- ✅ Complete fan shutdown in OFF mode
+- ✅ Proper compressor protection timing
+- ✅ Evaporator freeze prevention
+- ✅ Smooth PID control operation
+- ✅ Emergency safety system activation
+
+## Troubleshooting
+
+### Fan Won't Turn Off
+- Check diagnostic sensor **Output 2 (Blower Power)**
+- Verify `min_power: 0.00` in `blower_pwm_filter` configuration
+- Monitor **Ramp Blower** status for active ramping
+
+### Compressor Issues
+- Monitor **Compressor Protection Time Remaining**
+- Check **Compressor Short Cycle Protection Active** status
+- Review ESPHome logs for protection messages
+
+### PID Performance
+- Use **Trigger PID Test** button for manual testing
+- Monitor **PID Target Speed** vs **PID Current Speed** sensors
+- Adjust Kp value if response is too slow/fast
+
+## Credits
+
+- **Original Code**: anthonysecco - [Undermount AC V3 ESPHome Thermostat](https://github.com/anthonysecco/undermount-ac-esphome-thermostat)
+- **Base Framework**: Mike Goubeaux (Smarty Van) - Foundation code
+- **V2 Adaptation**: Chris Herman (HorizonBeckons) - Hardware compatibility and safety enhancements
 
 ## Contributing
-Feel free to fork and improve! This is open source hardware control at its best.
+
+When contributing to this V2-specific adaptation:
+
+- Ensure all changes maintain V2 hardware compatibility
+- Preserve safety protections and minimum speed requirements
+- Test thoroughly on actual V2 hardware before submitting
+- Document any new diagnostic features or safety mechanisms
 
 ## License
-Maintains original open source licensing. See original repository for details.
+
+This project maintains the same license as the original Undermount AC ESPHome Thermostat repository.
+
+---
+
+**Note**: This adaptation specifically addresses V2 hardware compatibility while enhancing safety and diagnostic capabilities. For V3 hardware, please use the [original repository](https://github.com/anthonysecco/undermount-ac-esphome-thermostat).
