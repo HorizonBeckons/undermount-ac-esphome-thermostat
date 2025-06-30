@@ -33,30 +33,30 @@ This is an enhanced version of the [original Undermount AC controller](https://g
 
 *All features below have been enhanced or added for V2 system compatibility. Based on the excellent foundation provided by the original project.*
 
-### 🛡️ Compressor Protection System *(Added)*
+### 🛡️ Compressor Protection System 
 - **Short-cycle protection:** Prevents compressor damage from rapid on/off cycling
 - **Timing safeguards:** 2-minute minimum run/off times with smart override logic
 - **Delayed shutdown scripts:** Proper evaporator purging sequences
 - **Protection status monitoring:** Real-time display of remaining protection time
 
-### 🎯 Enhanced PID Control *(Added)*
+### 🎯 Enhanced PID Control 
 - **Multiple trigger intervals:** Separate PID loops for cooling vs fan-only modes (2s for cooling, 5s for fan-only)
 - **Force fan-only start:** Immediate fan startup script to overcome thermostat delays
 - **Improved responsiveness:** Additional PID triggers for better temperature control
 
-### 📊 Advanced Diagnostics *(Added)*
+### 📊 Advanced Diagnostics 
 - **Protection timers:** Real-time sensors showing remaining protection time
 - **System state monitoring:** Additional binary sensors for compressor, fan, and protection status
 - **Emergency detection:** 10-second interval checking for dangerous conditions
 - **Enhanced sensor filtering:** Additional temperature stability filters
 
-### 🚨 Safety Features *(Added)*
+### 🚨 Safety Features 
 - **Evaporator protection:** Enhanced minimum airflow logic with configurable settings (40-60%)
 - **Emergency fan restart:** Automatic recovery if fan stops during compressor operation
 - **Smart state management:** Advanced handling of protection conflicts and pending shutdown requests
 - **High-speed compressor protection:** 70% minimum airflow enforcement when high-speed active
 
-### 🔧 Control Improvements *(Modified from Original)*
+### 🔧 Control Improvements 
 - **True zero capability:** Modified PWM filter for complete fan shutdown (min_power: 0.00 vs 0.15)
 - **Enhanced logging:** Changed from INFO to VERY_VERBOSE mode for better debugging
 - **Improved PWM filtering:** Enhanced zero-state handling and hysteresis logic
