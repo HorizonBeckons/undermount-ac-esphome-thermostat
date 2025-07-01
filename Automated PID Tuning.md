@@ -1,5 +1,5 @@
 # Automated PID Data Collection System
-**Untested**
+**Untested
 
 ## Overview
 This system provides automated data collection for PID tuning using Home Assistant automations, scripts, and data logging. It implements the testing methodology from the guide with minimal manual intervention.
