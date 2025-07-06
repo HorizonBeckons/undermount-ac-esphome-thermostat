@@ -8,6 +8,11 @@
 # - Implemented diagnostic monitoring and emergency handling
 # - Testing and validation on v2 hardware
 #
+# Version 0.4.5 Updates:
+# - All features tested and validated on v2 hardware
+# - High-speed compressor functionality confirmed working
+# - Documentation updated to reflect complete testing
+#
 # Version 0.4.4 Updates:
 # - Fixed blower fan speed control (uses integer speeds 1-100 for proper operation)
 # - Enhanced cooling request handling with pending state management
@@ -21,8 +26,7 @@
 # - Emergency blower activation if compressor runs without fan
 # - Manual safety override switch for emergency situations
 # - Automatic recovery from protection states
-#
-# - Auto Mode High Speed Compressor Functionality remains untested
+# - High-speed compressor auto-control based on demand (75% threshold)
 #
 # IMPORTANT: Wire colors differ between v2 and v3 systems!
 # GPIO pin assignments remain the same, only wire colors change.
@@ -135,7 +139,7 @@ esphome:
 
   project:
     name: anthonysecco.undermount-ac-v2-thermostat
-    version: "0.4.4"
+    version: "0.4.5"
 
 esp32:
   board: esp32-s3-devkitc-1
